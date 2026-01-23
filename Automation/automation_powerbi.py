@@ -11,10 +11,11 @@ OUTPUT_FROM = r"D:\Work\Automation Project\My Exploration\weekly_city_from_coded
 OUTPUT_TIME = r"D:\Work\Automation Project\My Exploration\weekly_city_timebucket.csv"
 OUTPUT_DISTANCE = r"D:\Work\Automation Project\My Exploration\weekly_city_distancebucket.csv"
 
-
 # ============================
 # Load & prepare base data
 # ============================
+
+
 def load_data(csv_path, excel_path):
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
     routes_df = pd.read_excel(excel_path)
@@ -45,7 +46,8 @@ def assign_time_bucket(t):
 
 
 def add_time_features(df):
-    df['travel_time'] = pd.to_datetime(df['travel_time'], errors='coerce').dt.time
+    df['travel_time'] = pd.to_datetime(
+        df['travel_time'], errors='coerce').dt.time
     df['time_bucket'] = df['travel_time'].apply(assign_time_bucket)
 
     df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
@@ -126,7 +128,8 @@ def add_total_rows(agg_df, dim_cols, total_level_cols):
     for _, group_df in grouped:
         result_rows.extend(group_df.to_dict(orient='records'))
 
-        total = group_df.drop(columns=dim_cols).sum(numeric_only=True).to_dict()
+        total = group_df.drop(columns=dim_cols).sum(
+            numeric_only=True).to_dict()
 
         for col in dim_cols:
             if col in total_level_cols:
@@ -137,8 +140,10 @@ def add_total_rows(agg_df, dim_cols, total_level_cols):
         if total['total_rides'] > 0:
             total['SN_pairing %'] = total['SN_paired'] / total['total_rides']
             total['TP_pairing %'] = total['TP_paired'] / total['total_rides']
-            total['SN_accepting %'] = total['SN_accepted'] / total['total_rides']
-            total['TP_accepting %'] = total['TP_accepted'] / total['total_rides']
+            total['SN_accepting %'] = total['SN_accepted'] / \
+                total['total_rides']
+            total['TP_accepting %'] = total['TP_accepted'] / \
+                total['total_rides']
         else:
             total['SN_pairing %'] = 0
             total['TP_pairing %'] = 0
@@ -208,7 +213,8 @@ def main():
     df = add_time_features(df)
     df = prepare_routes_lookup(df, routes_df)
 
-    success_cols = ['snapp_paired', 'tapsi_paired', 'snapp_accepted', 'tapsi_accepted']
+    success_cols = ['snapp_paired', 'tapsi_paired',
+                    'snapp_accepted', 'tapsi_accepted']
     df = convert_yes_no(df, success_cols)
 
     table_from = build_table(
