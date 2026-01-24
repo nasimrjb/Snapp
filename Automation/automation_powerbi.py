@@ -141,8 +141,8 @@ def aggregate_metrics(df, dims):
 
     agg['SN_pairing %'] = agg['SN_paired'] / agg['total_rides']
     agg['TP_pairing %'] = agg['TP_paired'] / agg['total_rides']
-    agg['SN_accepting %'] = agg['SN_accepted'] / agg['total_rides']
-    agg['TP_accepting %'] = agg['TP_accepted'] / agg['total_rides']
+    agg['SN_acceptance %'] = agg['SN_accepted'] / agg['SN_paired']
+    agg['TP_acceptance %'] = agg['TP_accepted'] / agg['TP_paired']
 
     return agg
 
