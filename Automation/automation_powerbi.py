@@ -141,8 +141,18 @@ def aggregate_metrics(df, dims):
 
     agg['SN_pairing %'] = agg['SN_paired'] / agg['total_rides']
     agg['TP_pairing %'] = agg['TP_paired'] / agg['total_rides']
-    agg['SN_acceptance %'] = agg['SN_accepted'] / agg['SN_paired']
-    agg['TP_acceptance %'] = agg['TP_accepted'] / agg['TP_paired']
+
+    agg['SN_acceptance %'] = np.where(
+        agg['SN_paired'] > 0,
+        agg['SN_accepted'] / agg['SN_paired'],
+        0
+    )
+
+    agg['TP_acceptance %'] = np.where(
+        agg['TP_paired'] > 0,
+        agg['TP_accepted'] / agg['TP_paired'],
+        0
+    )
 
     return agg
 
@@ -165,9 +175,15 @@ def add_totals(agg_df, dims, total_levels):
         tr = total['total_rides']
         total['SN_pairing %'] = total['SN_paired'] / tr if tr else 0
         total['TP_pairing %'] = total['TP_paired'] / tr if tr else 0
-        total['SN_accepting %'] = total['SN_accepted'] / tr if tr else 0
-        total['TP_accepting %'] = total['TP_accepted'] / tr if tr else 0
+        total['SN_acceptance %'] = (
+            total['SN_accepted'] / total['SN_paired']
+            if total['SN_paired'] > 0 else 0
+        )
 
+        total['TP_acceptance %'] = (
+            total['TP_accepted'] / total['TP_paired']
+            if total['TP_paired'] > 0 else 0
+        )
         # Carpool-based averages → accepted only
         total['Avg_SN_carp'] = g.loc[g['SN_accepted'] > 0, 'Avg_SN_carp'].mean()
         total['Avg_SN_Psub'] = g.loc[g['SN_accepted'] > 0, 'Avg_SN_Psub'].mean()
