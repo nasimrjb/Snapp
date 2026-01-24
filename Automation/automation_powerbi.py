@@ -4,12 +4,12 @@ import numpy as np
 # ============================
 # Paths
 # ============================
-CSV_PATH = r"D:\Work\Automation Project\DataSources\carpooling_export.csv"
+CSV_PATH = r"D:\Work\Automation Project\DataSources\carpooling_export_11_10_25_to_01_21_26.csv"
 EXCEL_PATH = r"D:\Work\Automation Project\DataSources\AllAvailableRoutes.xlsx"
 
-OUTPUT_FROM = r"D:\Work\Automation Project\My Exploration\weekly_city_from_coded.csv"
-OUTPUT_TIME = r"D:\Work\Automation Project\My Exploration\weekly_city_timebucket.csv"
-OUTPUT_DISTANCE = r"D:\Work\Automation Project\My Exploration\weekly_city_distancebucket.csv"
+OUTPUT_FROM = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_from_coded.csv"
+OUTPUT_TIME = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_timebucket.csv"
+OUTPUT_DISTANCE = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_distancebucket.csv"
 
 
 # ============================
@@ -47,7 +47,10 @@ def prepare_base_df(df):
 
 def add_time_features(df):
     df['travel_time'] = pd.to_datetime(
-        df['travel_time'], errors='coerce').dt.time
+        df['travel_time'],
+        format="%H:%M",
+        errors='coerce'
+    ).dt.time
     df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
 
     def bucket(t):
@@ -100,34 +103,42 @@ def merge_routes(df, routes_df):
 # ============================
 
 def aggregate_metrics(df, dims):
-    grouped = df.groupby(dims, dropna=False)
+    df = df.copy()
 
-    # Base metrics
-    agg = grouped.agg(
-        total_rides=('ride_id', 'nunique'),
-        SN_paired=('snapp_paired', 'sum'),
-        TP_paired=('tapsi_paired', 'sum'),
-        SN_accepted=('snapp_accepted', 'sum'),
-        TP_accepted=('tapsi_accepted', 'sum')
+    # Mask fares ONLY for carpool-based products
+    df['snapp_before_fare_acc'] = df['snapp_before_fare'].where(
+        df['snapp_accepted'])
+    df['snapp_after_fare_acc'] = df['snapp_after_fare'].where(
+        df['snapp_accepted'])
+
+    df['tapsi_before_fare_acc'] = df['tapsi_before_fare'].where(
+        df['tapsi_accepted'])
+    df['tapsi_after_fare_acc'] = df['tapsi_after_fare'].where(
+        df['tapsi_accepted'])
+
+    agg = (
+        df.groupby(dims, dropna=False)
+        .agg(
+            total_rides=('ride_id', 'nunique'),
+            SN_paired=('snapp_paired', 'sum'),
+            TP_paired=('tapsi_paired', 'sum'),
+            SN_accepted=('snapp_accepted', 'sum'),
+            TP_accepted=('tapsi_accepted', 'sum'),
+
+            # Carpool & Psub → accepted only
+            Avg_SN_carp=('snapp_before_fare_acc', 'mean'),
+            Avg_SN_Psub=('snapp_after_fare_acc', 'mean'),
+
+            Avg_TP_carp=('tapsi_before_fare_acc', 'mean'),
+            Avg_TP_Psub=('tapsi_after_fare_acc', 'mean'),
+
+            # Eco → no filtering at all
+            Avg_SN_Eco=('snapp_normal_fare', 'mean'),
+            Avg_TP_Eco=('tapsi_normal_fare', 'mean'),
+        )
+        .reset_index()
     )
 
-    # ✅ CONDITIONAL AVERAGES BASED ON ACCEPTED (CORRECTED)
-    agg['Avg_SN_carp'] = grouped.apply(
-        lambda g: g.loc[g['snapp_accepted'], 'snapp_before_fare'].mean()
-    )
-    agg['Avg_SN_Psub'] = grouped.apply(
-        lambda g: g.loc[g['snapp_accepted'], 'snapp_after_fare'].mean()
-    )
-    agg['Avg_TP_carp'] = grouped.apply(
-        lambda g: g.loc[g['tapsi_accepted'], 'tapsi_before_fare'].mean()
-    )
-    agg['Avg_TP_Psub'] = grouped.apply(
-        lambda g: g.loc[g['tapsi_accepted'], 'tapsi_after_fare'].mean()
-    )
-
-    agg = agg.reset_index()
-
-    # Percentages as fractions
     agg['SN_pairing %'] = agg['SN_paired'] / agg['total_rides']
     agg['TP_pairing %'] = agg['TP_paired'] / agg['total_rides']
     agg['SN_accepting %'] = agg['SN_accepted'] / agg['total_rides']
@@ -157,11 +168,16 @@ def add_totals(agg_df, dims, total_levels):
         total['SN_accepting %'] = total['SN_accepted'] / tr if tr else 0
         total['TP_accepting %'] = total['TP_accepted'] / tr if tr else 0
 
-        # ⚠️ Totals: recompute averages correctly based on ACCEPTED
+        # Carpool-based averages → accepted only
         total['Avg_SN_carp'] = g.loc[g['SN_accepted'] > 0, 'Avg_SN_carp'].mean()
         total['Avg_SN_Psub'] = g.loc[g['SN_accepted'] > 0, 'Avg_SN_Psub'].mean()
+
         total['Avg_TP_carp'] = g.loc[g['TP_accepted'] > 0, 'Avg_TP_carp'].mean()
         total['Avg_TP_Psub'] = g.loc[g['TP_accepted'] > 0, 'Avg_TP_Psub'].mean()
+
+        # Eco → simple mean across groups
+        total['Avg_SN_Eco'] = g['Avg_SN_Eco'].mean()
+        total['Avg_TP_Eco'] = g['Avg_TP_Eco'].mean()
 
         rows.append(total)
 
