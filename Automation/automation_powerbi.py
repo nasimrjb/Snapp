@@ -10,9 +10,9 @@ from datetime import time
 CSV_PATH = r"D:\Work\Automation Project\DataSources\carpooling_export_11_10_to_01_21.csv"
 EXCEL_PATH = r"D:\Work\Automation Project\DataSources\AllAvailableRoutes.xlsx"
 
-OUTPUT_FROM = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_from_coded.csv"
-OUTPUT_TIME = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_timebucket.csv"
-OUTPUT_DISTANCE = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_distancebucket.csv"
+OUTPUT_FROM = r"D:\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
+OUTPUT_TIME = r"D:\Work\Automation Project\Outputs\weekly_city_time_bucket.csv"
+OUTPUT_DISTANCE = r"D:\Work\Automation Project\Outputs\weekly_city_distance_bucket.csv"
 
 
 # ============================
@@ -122,7 +122,7 @@ def merge_routes(df, routes_df):
     routes_df = routes_df.rename(columns={
         'Origin_Add': 'from',
         'Destination_Add': 'to',
-        'Distance': 'distance-bucket',
+        'Distance': 'distance_bucket',
         'Or': 'from_coded',
         'DstDistID': 'to_coded'
     })
@@ -132,7 +132,7 @@ def merge_routes(df, routes_df):
         routes_df[col] = routes_df[col].astype(str).str.strip()
 
     return df.merge(
-        routes_df[['from', 'to', 'distance-bucket', 'from_coded', 'to_coded']],
+        routes_df[['from', 'to', 'distance_bucket', 'from_coded', 'to_coded']],
         how='left',
         on=['from', 'to']
     )
@@ -254,7 +254,7 @@ def main():
 
     table_distance = build_table(
         df,
-        dims=['week_number', 'city', 'distance-bucket']
+        dims=['week_number', 'city', 'distance_bucket']
     )
 
     table_from.to_csv(OUTPUT_FROM, index=False, encoding="utf-8-sig")
