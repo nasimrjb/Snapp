@@ -1,13 +1,13 @@
 import pandas as pd
 import numpy as np
+from datetime import time
 
 
-# Last Stable format before adding "real_data"
 # ============================
 # Paths
 # ============================
 
-CSV_PATH = r"D:\Work\Automation Project\DataSources\carpooling_export_11_10_25_to_01_21_26.csv"
+CSV_PATH = r"D:\Work\Automation Project\DataSources\carpooling_export_11_10_to_01_21.csv"
 EXCEL_PATH = r"D:\Work\Automation Project\DataSources\AllAvailableRoutes.xlsx"
 
 OUTPUT_FROM = r"D:\Work\Automation Project\My Exploration\Outputs\weekly_city_from_coded.csv"
@@ -49,28 +49,64 @@ def prepare_base_df(df):
 # ============================
 
 def add_time_features(df):
-    df['travel_time'] = pd.to_datetime(
-        df['travel_time'],
-        format="%H:%M",
-        errors='coerce'
-    ).dt.time
-
+    # Convert travel_date to datetime if it's not already
     df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
 
-    def bucket(t):
-        if pd.isna(t):
+    # Print first few values to debug
+    print("Sample travel_time values before conversion:")
+    print(df['travel_time'].head(10))
+    print(f"travel_time dtype: {df['travel_time'].dtype}")
+
+    # Try to parse travel_time - handle various formats
+    # First, ensure it's a string
+    df['travel_time'] = df['travel_time'].astype(str)
+
+    # Parse as datetime, trying multiple formats
+    df['travel_time_dt'] = pd.to_datetime(
+        df['travel_time'],
+        format="%H:%M:%S",
+        errors='coerce'
+    )
+
+    # If that didn't work, try H:M format
+    mask = df['travel_time_dt'].isna()
+    if mask.any():
+        df.loc[mask, 'travel_time_dt'] = pd.to_datetime(
+            df.loc[mask, 'travel_time'],
+            format="%H:%M",
+            errors='coerce'
+        )
+
+    # If still issues, try inferring format
+    mask = df['travel_time_dt'].isna()
+    if mask.any():
+        df.loc[mask, 'travel_time_dt'] = pd.to_datetime(
+            df.loc[mask, 'travel_time'],
+            errors='coerce'
+        )
+
+    print("\nSample travel_time_dt after conversion:")
+    print(df['travel_time_dt'].head(10))
+    print(f"Null count: {df['travel_time_dt'].isna().sum()}")
+
+    def bucket(dt):
+        if pd.isna(dt):
             return None
-        if t < pd.to_datetime("09:00").time():
+        hour = dt.hour
+        if hour < 9:
             return "06_09"
-        elif t < pd.to_datetime("15:00").time():
+        elif hour < 15:
             return "09_15"
-        elif t < pd.to_datetime("18:00").time():
+        elif hour < 18:
             return "15_18"
-        elif t < pd.to_datetime("21:00").time():
+        elif hour < 21:
             return "18_21"
         return None
 
-    df['time_bucket'] = df['travel_time'].apply(bucket)
+    df['time_bucket'] = df['travel_time_dt'].apply(bucket)
+
+    print("\ntime_bucket distribution:")
+    print(df['time_bucket'].value_counts(dropna=False))
 
     df['week_number'] = df['travel_date'].dt.isocalendar().week.astype(int)
     df['week_number'] += (df['travel_date'].dt.weekday >= 5).astype(int)
