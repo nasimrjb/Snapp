@@ -44,7 +44,6 @@ def prepare_base_df(df):
     for col in flag_cols:
         df[col] = df[col].eq('Yes')
 
-    # make sure numerics are clean
     fare_cols = [
         'snapp_before_fare', 'snapp_after_fare',
         'tapsi_before_fare', 'tapsi_after_fare',
@@ -79,8 +78,7 @@ def prepare_real_data(df):
 
     df['from_coded'] = df['from_coded'].astype('Int64')
 
-    num_cols = ['reqs', 'pairs', 'accepts', 'NMV', 'ride']
-    for col in num_cols:
+    for col in ['reqs', 'pairs', 'accepts', 'NMV', 'ride']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     return df
@@ -231,7 +229,7 @@ def merge_real_data_with_main(main_agg, real_agg, dims):
 
     merged['TP_pair_count'] = np.where(
         merged['TP_paired'] > MIN_PAIRED,
-        merged['SN_pair_count_raw'],  # still proxy
+        merged['SN_pair_count_raw'],
         np.nan
     )
 
@@ -305,16 +303,50 @@ def add_aov_metrics_for_from_table(df):
         np.nan
     )
 
-    # --- FORCE numeric + 2 decimals
     for col in ['AOV_real_SN', 'AOV_T_R', 'AOV_est']:
         df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
 
-    # also make sure SN_finished_ride is numeric
     df['SN_finished_ride'] = pd.to_numeric(
         df['SN_finished_ride'], errors='coerce')
 
     return df
 
+# ============================
+# Ratio Columns
+# ============================
+
+
+def add_ratio_columns(df):
+    df = df.copy()
+
+    df['pairing_ratio'] = np.where(
+        df['pairing %'] > 0,
+        df['SN_pairing %'] / df['pairing %'],
+        np.nan
+    )
+
+    df['acceptance_ratio'] = np.where(
+        df['acceptance %'] > 0,
+        df['SN_acceptance %'] / df['acceptance %'],
+        np.nan
+    )
+
+    df['pairing_3'] = np.where(
+        df['pairing_ratio'] > 0,
+        df['TP_pairing %'] / df['pairing_ratio'],
+        np.nan
+    )
+
+    df['acceptance_3'] = np.where(
+        df['acceptance_ratio'] > 0,
+        df['TP_acceptance %'] / df['acceptance_ratio'],
+        np.nan
+    )
+
+    for col in ['pairing_ratio', 'acceptance_ratio', 'pairing_3', 'acceptance_3']:
+        df[col] = pd.to_numeric(df[col], errors='coerce').round(3)
+
+    return df
 
 # ============================
 # Formatting
@@ -346,81 +378,52 @@ def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
     merged = format_output(merged)
     return merged
 
-
-def add_ratio_columns(df):
-    df = df.copy()
-
-    # Avoid division by zero or NaN
-    df['pairing_ratio'] = np.where(
-        df['pairing %'] > 0,
-        df['SN_pairing %'] / df['pairing %'],
-        np.nan
-    )
-
-    df['acceptance_ratio'] = np.where(
-        df['acceptance %'] > 0,
-        df['SN_acceptance %'] / df['acceptance %'],
-        np.nan
-    )
-
-    # Optional: round for Excel display
-    df['pairing_ratio'] = df['pairing_ratio'].round(3)
-    df['acceptance_ratio'] = df['acceptance_ratio'].round(3)
-
-    return df
-
 # ============================
 # Main
 # ============================
 
 
 def main():
-    # Load data
     df, routes_df, real_data_df = load_data(
         CSV_PATH, EXCEL_PATH, REAL_DATA_PATH)
 
-    # Prepare base and real data
     df = (
         df.pipe(prepare_base_df)
           .pipe(add_time_features)
           .pipe(merge_routes, routes_df)
     )
+
     real_data_df = prepare_real_data(real_data_df)
 
-    # -------------------------
-    # Weekly city from_coded
-    # -------------------------
+    # -------- from_coded table --------
     table_from = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'from_coded'],
         first_two_dims=['week_number', 'city']
     )
     table_from = add_aov_metrics_for_from_table(table_from)
-    # <-- ratios added before export
     table_from = add_ratio_columns(table_from)
     table_from.to_csv(OUTPUT_FROM, index=False, encoding="utf-8-sig")
 
-    # -------------------------
-    # Weekly city time_bucket
-    # -------------------------
+    # -------- time_bucket table --------
     table_time = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'time_bucket'],
         first_two_dims=['week_number', 'city']
     )
+    table_time = add_ratio_columns(table_time)
     table_time.to_csv(OUTPUT_TIME, index=False, encoding="utf-8-sig")
 
-    # -------------------------
-    # Weekly city distance_bucket
-    # -------------------------
+    # -------- distance_bucket table --------
     table_distance = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'distance_bucket'],
         first_two_dims=['week_number', 'city']
     )
+    table_distance = add_ratio_columns(table_distance)
     table_distance.to_csv(OUTPUT_DISTANCE, index=False, encoding="utf-8-sig")
 
-    print("✅ Aggregation complete. AOV metrics and ratio columns are numeric and exported.")
+    print("✅ Aggregation complete with AOV + 4 ratio columns (numeric-safe).")
 
 
 if __name__ == "__main__":
