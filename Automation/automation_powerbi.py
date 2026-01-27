@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from datetime import time
 
 # ============================
 # Paths
@@ -19,7 +18,7 @@ ADJ1 = 0.75
 ADJ2 = 0.8
 
 # ============================
-# Load & prepare data
+# Load
 # ============================
 
 
@@ -29,6 +28,10 @@ def load_data(csv_path, excel_path, real_data_path):
         pd.read_excel(excel_path),
         pd.read_csv(real_data_path, encoding="utf-8-sig")
     )
+
+# ============================
+# Base Prep
+# ============================
 
 
 def prepare_base_df(df):
@@ -41,7 +44,21 @@ def prepare_base_df(df):
     for col in flag_cols:
         df[col] = df[col].eq('Yes')
 
+    # make sure numerics are clean
+    fare_cols = [
+        'snapp_before_fare', 'snapp_after_fare',
+        'tapsi_before_fare', 'tapsi_after_fare',
+        'snapp_normal_fare', 'tapsi_normal_fare'
+    ]
+    for col in fare_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
     return df
+
+# ============================
+# Real Data Prep
+# ============================
 
 
 def prepare_real_data(df):
@@ -63,43 +80,42 @@ def prepare_real_data(df):
 
     num_cols = ['reqs', 'pairs', 'accepts', 'NMV', 'ride']
     for col in num_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     return df
 
 # ============================
-# Time features
+# Time Features
 # ============================
 
 
 def add_time_features(df):
     df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
-    df['travel_time'] = df['travel_time'].astype(str)
     df['travel_time_dt'] = pd.to_datetime(df['travel_time'], errors='coerce')
 
     def bucket(dt):
         if pd.isna(dt):
             return None
-        hour = dt.hour
-        if hour < 9:
+        h = dt.hour
+        if h < 9:
             return "06_09"
-        elif hour < 15:
+        elif h < 15:
             return "09_15"
-        elif hour < 18:
+        elif h < 18:
             return "15_18"
-        elif hour < 21:
+        elif h < 21:
             return "18_21"
         return None
 
     df['time_bucket'] = df['travel_time_dt'].apply(bucket)
+
     df['week_number'] = df['travel_date'].dt.isocalendar().week.astype(int)
     df['week_number'] += (df['travel_date'].dt.weekday >= 5).astype(int)
 
     return df
 
 # ============================
-# Merge routes lookup
+# Routes Merge
 # ============================
 
 
@@ -116,6 +132,8 @@ def merge_routes(df, routes_df):
         df[col] = df[col].astype(str).str.strip()
         routes_df[col] = routes_df[col].astype(str).str.strip()
 
+    routes_df['from_coded'] = routes_df['from_coded'].astype('Int64')
+
     return df.merge(
         routes_df[['from', 'to', 'distance_bucket', 'from_coded', 'to_coded']],
         how='left',
@@ -123,7 +141,7 @@ def merge_routes(df, routes_df):
     )
 
 # ============================
-# Aggregation
+# Main Aggregation
 # ============================
 
 
@@ -165,26 +183,26 @@ def aggregate_metrics(df, dims):
     agg['SN_acceptance %'] = np.where(
         agg['SN_paired'] > 0,
         agg['SN_accepted'] / agg['SN_paired'],
-        0
+        np.nan
     )
 
     agg['TP_acceptance %'] = np.where(
         agg['TP_paired'] > 0,
         agg['TP_accepted'] / agg['TP_paired'],
-        0
+        np.nan
     )
 
     return agg
 
 # ============================
-# Real data aggregation
+# Real Data Aggregation
 # ============================
 
 
 def aggregate_real_data(df, dims):
-    df = df.dropna(subset=dims, how='any')
+    df = df.dropna(subset=dims)
 
-    agg = (
+    return (
         df.groupby(dims, dropna=False)
         .agg(
             req_count=('reqs', 'sum'),
@@ -196,15 +214,11 @@ def aggregate_real_data(df, dims):
         .reset_index()
     )
 
-    return agg
-
 
 def merge_real_data_with_main(main_agg, real_agg, dims):
     merged = main_agg.merge(real_agg, on=dims, how='left')
 
-    fill_cols = ['req_count', 'SN_pair_count_raw',
-                 'SN_accept_count_raw', 'NMV_sum', 'ride_sum']
-    for col in fill_cols:
+    for col in ['req_count', 'SN_pair_count_raw', 'SN_accept_count_raw', 'NMV_sum', 'ride_sum']:
         merged[col] = merged[col].fillna(0)
 
     merged['SN_pair_count'] = np.where(
@@ -215,7 +229,7 @@ def merge_real_data_with_main(main_agg, real_agg, dims):
 
     merged['TP_pair_count'] = np.where(
         merged['TP_paired'] > MIN_PAIRED,
-        merged['SN_pair_count_raw'],
+        merged['SN_pair_count_raw'],  # still proxy
         np.nan
     )
 
@@ -225,24 +239,21 @@ def merge_real_data_with_main(main_agg, real_agg, dims):
         np.nan
     )
 
-    merged = merged.drop(columns=['SN_pair_count_raw', 'SN_accept_count_raw'])
-
-    return merged
+    return merged.drop(columns=['SN_pair_count_raw', 'SN_accept_count_raw'])
 
 # ============================
-# Derived metrics
+# Derived Metrics
 # ============================
 
 
 def calculate_derived_metrics(agg, first_two_dims):
     agg = agg.copy()
 
-    req_share_group = agg.groupby(first_two_dims, dropna=False)[
-        'req_count'].transform('sum')
+    req_group_sum = agg.groupby(first_two_dims)['req_count'].transform('sum')
 
     agg['req_share %'] = np.where(
-        req_share_group > MIN_PAIRED,
-        agg['req_count'] / req_share_group,
+        req_group_sum > MIN_PAIRED,
+        agg['req_count'] / req_group_sum,
         np.nan
     )
 
@@ -261,7 +272,7 @@ def calculate_derived_metrics(agg, first_two_dims):
     return agg
 
 # ============================
-# AOV Metrics ONLY for from_coded
+# AOV (from_coded only)
 # ============================
 
 
@@ -274,15 +285,15 @@ def add_aov_metrics_for_from_table(df):
         np.nan
     )
 
-    df['AOV_T/R'] = np.where(
+    df['AOV_T_R'] = np.where(
         df['AOV_real_SN'] > 0,
-        (df['adj1'] * df['Avg_SN_carp']) / (df['adj2'] * df['AOV_real_SN']),
+        (ADJ1 * df['Avg_SN_carp']) / (ADJ2 * df['AOV_real_SN']),
         np.nan
     )
 
     df['AOV_est'] = np.where(
-        df['AOV_T/R'] > 0,
-        df['Avg_TP_carp'] / df['AOV_T/R'],
+        df['AOV_T_R'] > 0,
+        df['Avg_TP_carp'] / df['AOV_T_R'],
         np.nan
     )
 
@@ -292,7 +303,16 @@ def add_aov_metrics_for_from_table(df):
         np.nan
     )
 
+    # --- FORCE numeric + 2 decimals
+    for col in ['AOV_real_SN', 'AOV_T_R', 'AOV_est']:
+        df[col] = pd.to_numeric(df[col], errors='coerce').round(2)
+
+    # also make sure SN_finished_ride is numeric
+    df['SN_finished_ride'] = pd.to_numeric(
+        df['SN_finished_ride'], errors='coerce')
+
     return df
+
 
 # ============================
 # Formatting
@@ -312,17 +332,17 @@ def format_output(df):
     return df
 
 # ============================
-# Build table
+# Builder
 # ============================
 
 
 def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
     main_agg = aggregate_metrics(df, dims)
     real_agg = aggregate_real_data(real_data_df, dims)
-    merged_agg = merge_real_data_with_main(main_agg, real_agg, dims)
-    merged_agg = calculate_derived_metrics(merged_agg, first_two_dims)
-    merged_agg = format_output(merged_agg)
-    return merged_agg
+    merged = merge_real_data_with_main(main_agg, real_agg, dims)
+    merged = calculate_derived_metrics(merged, first_two_dims)
+    merged = format_output(merged)
+    return merged
 
 # ============================
 # Main
@@ -342,8 +362,7 @@ def main():
     real_data_df = prepare_real_data(real_data_df)
 
     table_from = build_table_with_real_data(
-        df,
-        real_data_df,
+        df, real_data_df,
         dims=['week_number', 'city', 'from_coded'],
         first_two_dims=['week_number', 'city']
     )
@@ -351,15 +370,13 @@ def main():
     table_from = add_aov_metrics_for_from_table(table_from)
 
     table_time = build_table_with_real_data(
-        df,
-        real_data_df,
+        df, real_data_df,
         dims=['week_number', 'city', 'time_bucket'],
         first_two_dims=['week_number', 'city']
     )
 
     table_distance = build_table_with_real_data(
-        df,
-        real_data_df,
+        df, real_data_df,
         dims=['week_number', 'city', 'distance_bucket'],
         first_two_dims=['week_number', 'city']
     )
@@ -368,7 +385,7 @@ def main():
     table_time.to_csv(OUTPUT_TIME, index=False, encoding="utf-8-sig")
     table_distance.to_csv(OUTPUT_DISTANCE, index=False, encoding="utf-8-sig")
 
-    print("✅ Aggregation complete with AOV metrics only in weekly_city_from_coded")
+    print("✅ Aggregation complete. AOV metrics fixed and numeric-safe.")
 
 
 if __name__ == "__main__":
