@@ -10,9 +10,9 @@ pd.set_option('future.no_silent_downcasting', True)
 # Paths
 # =========================
 
-CSV1_PATH = r"D:\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
-CSV2_PATH = r"D:\Work\Automation Project\DataSources\real_data_11_10_to_01_23.csv"
-OUTPUT_PATH = r"D:\Work\Automation Project\Outputs\weekly_city_aggregated_models.csv"
+CSV1_PATH = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
+CSV2_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_11_10_to_01_23.csv"
+OUTPUT_PATH = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_aggregated_models.csv"
 
 # =========================
 # Utility Functions
