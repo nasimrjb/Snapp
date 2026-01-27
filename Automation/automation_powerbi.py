@@ -65,6 +65,7 @@ def prepare_real_data(df):
     city_mapping = {
         1.0: "Tehran",
         2.0: "Karaj",
+        3.0: "Isfahan",
         5.0: "Mashhad"
     }
 
@@ -91,7 +92,8 @@ def prepare_real_data(df):
 
 def add_time_features(df):
     df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
-    df['travel_time_dt'] = pd.to_datetime(df['travel_time'], errors='coerce')
+    df['travel_time_dt'] = pd.to_datetime(
+        df['travel_time'], format='%H:%M:%S', errors='coerce')
 
     def bucket(dt):
         if pd.isna(dt):
@@ -344,48 +346,81 @@ def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
     merged = format_output(merged)
     return merged
 
+
+def add_ratio_columns(df):
+    df = df.copy()
+
+    # Avoid division by zero or NaN
+    df['pairing_ratio'] = np.where(
+        df['pairing %'] > 0,
+        df['SN_pairing %'] / df['pairing %'],
+        np.nan
+    )
+
+    df['acceptance_ratio'] = np.where(
+        df['acceptance %'] > 0,
+        df['SN_acceptance %'] / df['acceptance %'],
+        np.nan
+    )
+
+    # Optional: round for Excel display
+    df['pairing_ratio'] = df['pairing_ratio'].round(3)
+    df['acceptance_ratio'] = df['acceptance_ratio'].round(3)
+
+    return df
+
 # ============================
 # Main
 # ============================
 
 
 def main():
+    # Load data
     df, routes_df, real_data_df = load_data(
         CSV_PATH, EXCEL_PATH, REAL_DATA_PATH)
 
+    # Prepare base and real data
     df = (
         df.pipe(prepare_base_df)
           .pipe(add_time_features)
           .pipe(merge_routes, routes_df)
     )
-
     real_data_df = prepare_real_data(real_data_df)
 
+    # -------------------------
+    # Weekly city from_coded
+    # -------------------------
     table_from = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'from_coded'],
         first_two_dims=['week_number', 'city']
     )
-
     table_from = add_aov_metrics_for_from_table(table_from)
+    # <-- ratios added before export
+    table_from = add_ratio_columns(table_from)
+    table_from.to_csv(OUTPUT_FROM, index=False, encoding="utf-8-sig")
 
+    # -------------------------
+    # Weekly city time_bucket
+    # -------------------------
     table_time = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'time_bucket'],
         first_two_dims=['week_number', 'city']
     )
+    table_time.to_csv(OUTPUT_TIME, index=False, encoding="utf-8-sig")
 
+    # -------------------------
+    # Weekly city distance_bucket
+    # -------------------------
     table_distance = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'distance_bucket'],
         first_two_dims=['week_number', 'city']
     )
-
-    table_from.to_csv(OUTPUT_FROM, index=False, encoding="utf-8-sig")
-    table_time.to_csv(OUTPUT_TIME, index=False, encoding="utf-8-sig")
     table_distance.to_csv(OUTPUT_DISTANCE, index=False, encoding="utf-8-sig")
 
-    print("✅ Aggregation complete. AOV metrics fixed and numeric-safe.")
+    print("✅ Aggregation complete. AOV metrics and ratio columns are numeric and exported.")
 
 
 if __name__ == "__main__":
