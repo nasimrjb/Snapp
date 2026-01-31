@@ -128,17 +128,82 @@ def merge_routes(df, routes_df):
         'DstDistID': 'to_coded'
     })
 
+    # STEP 1: Remove rows with actually missing addresses
+    df = df[df['from'].notna() & df['to'].notna()]
+    df = df[df['from'].astype(str).str.strip().str.lower() != 'nan']
+    df = df[df['to'].astype(str).str.strip().str.lower() != 'nan']
+
+    # STEP 2: Normalize Persian text
+    def normalize_persian(text):
+        if pd.isna(text):
+            return text
+        text = str(text).strip()
+        # Replace Arabic characters with Persian equivalents
+        text = text.replace('ي', 'ی').replace('ك', 'ک')
+        # Remove zero-width characters
+        text = text.replace('\u200c', '').replace(
+            '\u200b', '').replace('\ufeff', '')
+        # Normalize multiple spaces
+        text = ' '.join(text.split())
+        return text
+
     for col in ['from', 'to']:
-        df[col] = df[col].astype(str).str.strip()
-        routes_df[col] = routes_df[col].astype(str).str.strip()
+        df[col] = df[col].apply(normalize_persian)
+        routes_df[col] = routes_df[col].apply(normalize_persian)
 
     routes_df['from_coded'] = routes_df['from_coded'].astype('Int64')
+    routes_df = routes_df.drop_duplicates(subset=['from', 'to'], keep='first')
 
-    return df.merge(
+    # STEP 3: First try exact match
+    merged = df.merge(
         routes_df[['from', 'to', 'distance_bucket', 'from_coded', 'to_coded']],
         how='left',
-        on=['from', 'to']
+        on=['from', 'to'],
+        indicator=True
     )
+
+    # STEP 4: Find unmatched routes and create placeholders
+    unmatched = merged[merged['_merge'] == 'left_only'].copy()
+
+    if len(unmatched) > 0:
+        print(
+            f"\n⚠️ Found {len(unmatched)} rows with routes not in Route.xlsx")
+
+        # Get unique unmatched from-to pairs
+        unmatched_pairs = unmatched[['from', 'to']
+                                    ].drop_duplicates().reset_index(drop=True)
+        print(f"Unique unmatched route pairs: {len(unmatched_pairs)}")
+
+        # Create temporary codes for unmatched routes
+        # Start from a high number to avoid conflicts
+        next_from_code = routes_df['from_coded'].max(
+        ) + 1000 if routes_df['from_coded'].notna().any() else 1000
+
+        # Assign unique from_coded to each unique 'from' address
+        unique_from = unmatched_pairs['from'].unique()
+        from_code_map = {addr: next_from_code +
+                         i for i, addr in enumerate(unique_from)}
+
+        # For unmatched rows, assign temporary codes
+        for idx in unmatched.index:
+            from_addr = merged.loc[idx, 'from']
+            merged.loc[idx, 'from_coded'] = from_code_map.get(from_addr)
+            # or calculate actual distance if possible
+            merged.loc[idx, 'distance_bucket'] = 'Unknown'
+
+        # Save unmatched pairs for user to add to Route.xlsx
+        unmatched_pairs['suggested_from_coded'] = unmatched_pairs['from'].map(
+            from_code_map)
+        unmatched_pairs['suggested_distance'] = 'Unknown'
+        unmatched_pairs.to_csv('MISSING_ROUTES_TO_ADD.csv',
+                               index=False, encoding='utf-8-sig')
+        print(f"📝 Saved missing routes to: MISSING_ROUTES_TO_ADD.csv")
+        print("   Please add these routes to your Route.xlsx file!")
+
+    # Drop the merge indicator column
+    merged = merged.drop(columns=['_merge'])
+
+    return merged
 
 # ============================
 # Main Aggregation
@@ -392,6 +457,22 @@ def main():
           .pipe(add_time_features)
           .pipe(merge_routes, routes_df)
     )
+    print("\n=== MERGE DIAGNOSTICS ===")
+    print(f"Total rows after merge: {len(df)}")
+    print(f"Rows with NULL from_coded: {df['from_coded'].isna().sum()}")
+    print(
+        f"Rows with NULL distance_bucket: {df['distance_bucket'].isna().sum()}")
+
+    # Show sample unmatched rows
+    unmatched = df[df['from_coded'].isna() | df['distance_bucket'].isna()]
+    if len(unmatched) > 0:
+        print("\nSample unmatched rows:")
+        print(
+            unmatched[['from', 'to', 'from_coded', 'distance_bucket']].head(10))
+
+        # Show unique from-to pairs that didn't match
+        print("\nUnique unmatched from-to pairs:")
+        print(unmatched[['from', 'to']].drop_duplicates().head(10))
 
     real_data_df = prepare_real_data(real_data_df)
 
