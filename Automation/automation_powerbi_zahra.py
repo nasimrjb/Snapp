@@ -90,14 +90,27 @@ def prepare_real_data(df):
 
 
 def add_time_features(df):
-    df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
-    df['travel_time_dt'] = pd.to_datetime(
-        df['travel_time'], format='%H:%M:%S', errors='coerce')
+    df = df.copy()
 
-    def bucket(dt):
-        if pd.isna(dt):
-            return None
-        h = dt.hour
+    # --- travel_date ---
+    df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
+
+    # --- FIX travel_time parsing ---
+    df['travel_time'] = df['travel_time'].astype(str).str.strip()
+
+    # Try parsing without forcing format
+    df['travel_time_dt'] = pd.to_datetime(
+        df['travel_time'],
+        errors='coerce'
+    )
+
+    # Extract hour safely
+    df['hour'] = df['travel_time_dt'].dt.hour
+
+    # --- Time bucket logic ---
+    def bucket(h):
+        if pd.isna(h):
+            return np.nan
         if h < 9:
             return "06_09"
         elif h < 15:
@@ -106,14 +119,16 @@ def add_time_features(df):
             return "15_18"
         elif h < 21:
             return "18_21"
-        return None
+        return np.nan
 
-    df['time_bucket'] = df['travel_time_dt'].apply(bucket)
+    df['time_bucket'] = df['hour'].apply(bucket)
 
+    # --- Week number ---
     df['week_number'] = df['travel_date'].dt.isocalendar().week.astype(int)
     df['week_number'] += (df['travel_date'].dt.weekday >= 5).astype(int)
 
     return df
+
 
 # ============================
 # Routes Merge
@@ -121,6 +136,7 @@ def add_time_features(df):
 
 
 def merge_routes(df, routes_df):
+
     routes_df = routes_df.rename(columns={
         'Origin_Add': 'from',
         'Destination_Add': 'to',
@@ -129,17 +145,31 @@ def merge_routes(df, routes_df):
         'DstDistID': 'to_coded'
     })
 
+    def clean_text(s):
+        return (
+            s.astype(str)
+            .str.strip()
+            .str.replace("‌", "", regex=False)   # half-space
+            .str.replace("\u200c", "", regex=False)
+            .str.replace("ي", "ی", regex=False)
+            .str.replace("ك", "ک", regex=False)
+            .str.replace("أ", "ا", regex=False)
+            .str.replace("إ", "ا", regex=False))
+
     for col in ['from', 'to']:
-        df[col] = df[col].astype(str).str.strip()
-        routes_df[col] = routes_df[col].astype(str).str.strip()
+        df[col] = clean_text(df[col])
+        routes_df[col] = clean_text(routes_df[col])
 
-    routes_df['from_coded'] = routes_df['from_coded'].astype('Int64')
-
-    return df.merge(
+    merged = df.merge(
         routes_df[['from', 'to', 'distance_bucket', 'from_coded', 'to_coded']],
-        how='left',
-        on=['from', 'to']
+        how="left",
+        on=["from", "to"]
     )
+
+    print("❌ Unmatched routes:", merged['distance_bucket'].isna().sum())
+
+    return merged
+
 
 # ============================
 # Main Aggregation

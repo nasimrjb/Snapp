@@ -5,9 +5,9 @@ import numpy as np
 # Paths
 # ============================
 
-CSV_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\carpooling_export_11_10_to_01_21.csv"
-EXCEL_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\AllAvailableRoutes.xlsx"
-REAL_DATA_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_11_10_to_01_23.csv"
+CSV_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\carpooling_export_5.csv"
+EXCEL_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\Route.xlsx"
+REAL_DATA_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_5.csv"
 
 OUTPUT_FROM = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
 OUTPUT_TIME = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_time_bucket.csv"
