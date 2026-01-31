@@ -5,7 +5,7 @@ import numpy as np
 # Paths
 # =========================
 CSV1_PATH = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
-CSV2_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_11_10_to_01_23.csv"
+CSV2_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_5.csv"
 
 OUTPUT_PATH = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_aggregated_models.xlsx"
 

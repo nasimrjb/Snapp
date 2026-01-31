@@ -115,11 +115,16 @@ def add_time_features(df):
     return df
 
 # ============================
-# Routes Merge
+# Routes Merge - FIXED VERSION
 # ============================
 
 
 def merge_routes(df, routes_df):
+    """
+    Merge routes with robust text normalization to handle spacing variations
+    """
+    # Prepare routes dataframe
+    routes_df = routes_df.copy()
     routes_df = routes_df.rename(columns={
         'Origin_Add': 'from',
         'Destination_Add': 'to',
@@ -128,80 +133,112 @@ def merge_routes(df, routes_df):
         'DstDistID': 'to_coded'
     })
 
-    # STEP 1: Remove rows with actually missing addresses
-    df = df[df['from'].notna() & df['to'].notna()]
-    df = df[df['from'].astype(str).str.strip().str.lower() != 'nan']
-    df = df[df['to'].astype(str).str.strip().str.lower() != 'nan']
-
-    # STEP 2: Normalize Persian text
-    def normalize_persian(text):
+    # Text normalization function
+    def normalize_text(text):
+        """
+        Normalize Persian text by removing all spaces and invisible characters
+        This handles spacing variations like 'چهار باغ' vs 'چهارباغ'
+        """
         if pd.isna(text):
-            return text
+            return None
+
         text = str(text).strip()
+
+        # Filter out 'nan' strings
+        if text.lower() == 'nan' or text == '':
+            return None
+
         # Replace Arabic characters with Persian equivalents
         text = text.replace('ي', 'ی').replace('ك', 'ک')
-        # Remove zero-width characters
-        text = text.replace('\u200c', '').replace(
-            '\u200b', '').replace('\ufeff', '')
-        # Normalize multiple spaces
-        text = ' '.join(text.split())
+
+        # Remove all invisible Unicode characters
+        text = text.replace('\u200c', '')  # Zero-width non-joiner
+        text = text.replace('\u200b', '')  # Zero-width space
+        text = text.replace('\u200d', '')  # Zero-width joiner
+        text = text.replace('\ufeff', '')  # Zero-width no-break space
+        text = text.replace('\xa0', '')    # Non-breaking space
+        text = text.replace('\u202a', '')  # Left-to-right embedding
+        text = text.replace('\u202b', '')  # Right-to-left embedding
+        text = text.replace('\u202c', '')  # Pop directional formatting
+
+        # CRITICAL: Remove ALL spaces to handle spacing variations
+        text = text.replace(' ', '')
+
+        # Convert to lowercase for case-insensitive matching
+        text = text.lower()
+
         return text
 
-    for col in ['from', 'to']:
-        df[col] = df[col].apply(normalize_persian)
-        routes_df[col] = routes_df[col].apply(normalize_persian)
+    # Keep original values
+    df['from_original'] = df['from'].copy()
+    df['to_original'] = df['to'].copy()
 
+    # Create normalized columns for matching
+    df['from_normalized'] = df['from'].apply(normalize_text)
+    df['to_normalized'] = df['to'].apply(normalize_text)
+
+    routes_df['from_normalized'] = routes_df['from'].apply(normalize_text)
+    routes_df['to_normalized'] = routes_df['to'].apply(normalize_text)
+
+    # Remove rows with null addresses from main data
+    initial_len = len(df)
+    df = df[df['from_normalized'].notna() & df['to_normalized'].notna()].copy()
+    removed = initial_len - len(df)
+
+    if removed > 0:
+        print(f"ℹ️  Removed {removed} rows with missing/invalid addresses")
+
+    # Remove rows with null addresses from routes
+    routes_df = routes_df[routes_df['from_normalized'].notna(
+    ) & routes_df['to_normalized'].notna()].copy()
+
+    # Remove duplicate routes (keep first occurrence)
+    routes_df = routes_df.drop_duplicates(
+        subset=['from_normalized', 'to_normalized'], keep='first')
+
+    # Convert from_coded to Int64 for proper handling of NaN
     routes_df['from_coded'] = routes_df['from_coded'].astype('Int64')
-    routes_df = routes_df.drop_duplicates(subset=['from', 'to'], keep='first')
 
-    # STEP 3: First try exact match
+    # Prepare lookup table with only necessary columns
+    routes_lookup = routes_df[['from_normalized', 'to_normalized',
+                               'distance_bucket', 'from_coded', 'to_coded']].copy()
+
+    # Perform the merge using normalized columns
     merged = df.merge(
-        routes_df[['from', 'to', 'distance_bucket', 'from_coded', 'to_coded']],
-        how='left',
-        on=['from', 'to'],
-        indicator=True
+        routes_lookup,
+        on=['from_normalized', 'to_normalized'],
+        how='left'
     )
 
-    # STEP 4: Find unmatched routes and create placeholders
-    unmatched = merged[merged['_merge'] == 'left_only'].copy()
+    # Check for unmatched routes
+    unmatched_count = merged['from_coded'].isna().sum()
+    matched_count = merged['from_coded'].notna().sum()
 
-    if len(unmatched) > 0:
+    print(f"\n✓ Merge Results:")
+    print(
+        f"  Matched:   {matched_count:,} rows ({matched_count/len(merged)*100:.1f}%)")
+    print(
+        f"  Unmatched: {unmatched_count:,} rows ({unmatched_count/len(merged)*100:.1f}%)")
+
+    if unmatched_count > 0:
         print(
-            f"\n⚠️ Found {len(unmatched)} rows with routes not in Route.xlsx")
+            f"\n⚠️  WARNING: {unmatched_count} rows didn't match any route in Route.xlsx")
+        print(
+            f"  These rows will have NULL values in from_coded and distance_bucket columns")
+        print(f"  Check your Route.xlsx file to ensure all routes are included")
 
-        # Get unique unmatched from-to pairs
-        unmatched_pairs = unmatched[['from', 'to']
-                                    ].drop_duplicates().reset_index(drop=True)
-        print(f"Unique unmatched route pairs: {len(unmatched_pairs)}")
+        # Save unmatched routes for review
+        unmatched_routes = merged[merged['from_coded'].isna(
+        )][['from_original', 'to_original']].drop_duplicates()
+        if len(unmatched_routes) > 0:
+            unmatched_routes.to_csv(
+                'UNMATCHED_ROUTES_CHECK.csv', index=False, encoding='utf-8-sig')
+            print(
+                f"  → Saved {len(unmatched_routes)} unique unmatched routes to: UNMATCHED_ROUTES_CHECK.csv")
 
-        # Create temporary codes for unmatched routes
-        # Start from a high number to avoid conflicts
-        next_from_code = routes_df['from_coded'].max(
-        ) + 1000 if routes_df['from_coded'].notna().any() else 1000
-
-        # Assign unique from_coded to each unique 'from' address
-        unique_from = unmatched_pairs['from'].unique()
-        from_code_map = {addr: next_from_code +
-                         i for i, addr in enumerate(unique_from)}
-
-        # For unmatched rows, assign temporary codes
-        for idx in unmatched.index:
-            from_addr = merged.loc[idx, 'from']
-            merged.loc[idx, 'from_coded'] = from_code_map.get(from_addr)
-            # or calculate actual distance if possible
-            merged.loc[idx, 'distance_bucket'] = 'Unknown'
-
-        # Save unmatched pairs for user to add to Route.xlsx
-        unmatched_pairs['suggested_from_coded'] = unmatched_pairs['from'].map(
-            from_code_map)
-        unmatched_pairs['suggested_distance'] = 'Unknown'
-        unmatched_pairs.to_csv('MISSING_ROUTES_TO_ADD.csv',
-                               index=False, encoding='utf-8-sig')
-        print(f"📝 Saved missing routes to: MISSING_ROUTES_TO_ADD.csv")
-        print("   Please add these routes to your Route.xlsx file!")
-
-    # Drop the merge indicator column
-    merged = merged.drop(columns=['_merge'])
+    # Clean up: remove normalized columns and restore original from/to
+    merged = merged.drop(
+        columns=['from_normalized', 'to_normalized', 'from_original', 'to_original'])
 
     return merged
 
@@ -449,34 +486,32 @@ def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
 
 
 def main():
+    print("\n" + "="*60)
+    print("CARPOOLING DATA AGGREGATION - FIXED VERSION")
+    print("="*60)
+
     df, routes_df, real_data_df = load_data(
         CSV_PATH, EXCEL_PATH, REAL_DATA_PATH)
+
+    print(f"\n📊 Data loaded:")
+    print(f"  Carpooling data: {len(df):,} rows")
+    print(f"  Routes:          {len(routes_df):,} routes")
+    print(f"  Real data:       {len(real_data_df):,} rows")
 
     df = (
         df.pipe(prepare_base_df)
           .pipe(add_time_features)
           .pipe(merge_routes, routes_df)
     )
-    print("\n=== MERGE DIAGNOSTICS ===")
-    print(f"Total rows after merge: {len(df)}")
-    print(f"Rows with NULL from_coded: {df['from_coded'].isna().sum()}")
-    print(
-        f"Rows with NULL distance_bucket: {df['distance_bucket'].isna().sum()}")
-
-    # Show sample unmatched rows
-    unmatched = df[df['from_coded'].isna() | df['distance_bucket'].isna()]
-    if len(unmatched) > 0:
-        print("\nSample unmatched rows:")
-        print(
-            unmatched[['from', 'to', 'from_coded', 'distance_bucket']].head(10))
-
-        # Show unique from-to pairs that didn't match
-        print("\nUnique unmatched from-to pairs:")
-        print(unmatched[['from', 'to']].drop_duplicates().head(10))
 
     real_data_df = prepare_real_data(real_data_df)
 
+    print("\n" + "="*60)
+    print("GENERATING OUTPUT TABLES")
+    print("="*60)
+
     # -------- from_coded table --------
+    print("\n[1/3] Building from_coded table...")
     table_from = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'from_coded'],
@@ -485,8 +520,10 @@ def main():
     table_from = add_aov_metrics_for_from_table(table_from)
     table_from = add_ratio_columns(table_from)
     table_from.to_csv(OUTPUT_FROM, index=False, encoding="utf-8-sig")
+    print(f"  ✓ Saved: {OUTPUT_FROM} ({len(table_from):,} rows)")
 
     # -------- time_bucket table --------
+    print("\n[2/3] Building time_bucket table...")
     table_time = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'time_bucket'],
@@ -494,8 +531,10 @@ def main():
     )
     table_time = add_ratio_columns(table_time)
     table_time.to_csv(OUTPUT_TIME, index=False, encoding="utf-8-sig")
+    print(f"  ✓ Saved: {OUTPUT_TIME} ({len(table_time):,} rows)")
 
     # -------- distance_bucket table --------
+    print("\n[3/3] Building distance_bucket table...")
     table_distance = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'distance_bucket'],
@@ -503,8 +542,35 @@ def main():
     )
     table_distance = add_ratio_columns(table_distance)
     table_distance.to_csv(OUTPUT_DISTANCE, index=False, encoding="utf-8-sig")
+    print(f"  ✓ Saved: {OUTPUT_DISTANCE} ({len(table_distance):,} rows)")
 
-    print("✅ Aggregation complete with AOV + 4 ratio columns (numeric-safe).")
+    print("\n" + "="*60)
+    print("✅ AGGREGATION COMPLETE")
+    print("="*60)
+    print("\nOutput files generated:")
+    print(f"  1. {OUTPUT_FROM}")
+    print(f"  2. {OUTPUT_TIME}")
+    print(f"  3. {OUTPUT_DISTANCE}")
+
+    # Check for NULL buckets in outputs
+    print("\n" + "="*60)
+    print("DATA QUALITY CHECK")
+    print("="*60)
+
+    null_from = table_from['from_coded'].isna().sum()
+    null_time = table_time['time_bucket'].isna().sum()
+    null_dist = table_distance['distance_bucket'].isna().sum()
+
+    print(f"\nNull values in grouping columns:")
+    print(f"  from_coded:       {null_from} rows")
+    print(f"  time_bucket:      {null_time} rows")
+    print(f"  distance_bucket:  {null_dist} rows")
+
+    if null_from == 0 and null_time == 0 and null_dist == 0:
+        print("\n✓ All grouping columns are complete - no NULL values!")
+    else:
+        print("\n⚠️  Some grouping columns have NULL values")
+        print("   This is normal if some rides couldn't be matched to routes")
 
 
 if __name__ == "__main__":
