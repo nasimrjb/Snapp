@@ -41,7 +41,7 @@ def weighted_avg(df, value_col, weight_col):
 
 def wow(series):
     series = pd.to_numeric(series, errors="coerce")
-    return series.pct_change(fill_method=None)
+    return series.diff()
 
 
 # =========================
