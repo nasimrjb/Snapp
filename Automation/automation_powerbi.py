@@ -323,6 +323,12 @@ def merge_real_data_with_main(main_agg, real_agg, dims):
     for col in ['req_count', 'SN_pair_count_raw', 'SN_accept_count_raw', 'NMV_sum', 'ride_sum']:
         merged[col] = merged[col].fillna(0)
 
+    # Create no-filter versions (nf) - these are always calculated
+    merged['SN_pair_count_nf'] = merged['SN_pair_count_raw']
+    merged['TP_pair_count_nf'] = merged['SN_pair_count_raw']
+    merged['SN_accept_count_nf'] = merged['SN_accept_count_raw']
+
+    # Create filtered versions - these apply MIN_PAIRED filter
     merged['SN_pair_count'] = np.where(
         merged['SN_paired'] > MIN_PAIRED,
         merged['SN_pair_count_raw'],
@@ -353,21 +359,31 @@ def calculate_derived_metrics(agg, first_two_dims):
 
     req_group_sum = agg.groupby(first_two_dims)['req_count'].transform('sum')
 
+    # req_share % with filter (original)
     agg['req_share %'] = np.where(
         req_group_sum > MIN_PAIRED,
         agg['req_count'] / req_group_sum,
         np.nan
     )
 
-    agg['pairing %'] = np.where(
-        agg['req_count'] > 0,
-        agg['SN_pair_count'] / agg['req_count'],
+    # req_share_nf % without filter (new)
+    agg['req_share_nf %'] = np.where(
+        req_group_sum > 0,
+        agg['req_count'] / req_group_sum,
         np.nan
     )
 
+    # UPDATED: pairing % now uses SN_pair_count_nf (no filter)
+    agg['pairing %'] = np.where(
+        agg['req_count'] > 0,
+        agg['SN_pair_count_nf'] / agg['req_count'],
+        np.nan
+    )
+
+    # UPDATED: acceptance % now uses SN_pair_count_nf and SN_accept_count_nf (no filter)
     agg['acceptance %'] = np.where(
-        agg['SN_pair_count'] > 0,
-        agg['SN_accept_count'] / agg['SN_pair_count'],
+        agg['SN_pair_count_nf'] > 0,
+        agg['SN_accept_count_nf'] / agg['SN_pair_count_nf'],
         np.nan
     )
 
@@ -487,7 +503,7 @@ def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
 
 def main():
     print("\n" + "="*60)
-    print("CARPOOLING DATA AGGREGATION - FIXED VERSION")
+    print("CARPOOLING DATA AGGREGATION - REVISED WITH NF METRICS")
     print("="*60)
 
     df, routes_df, real_data_df = load_data(
@@ -571,6 +587,23 @@ def main():
     else:
         print("\n⚠️  Some grouping columns have NULL values")
         print("   This is normal if some rides couldn't be matched to routes")
+
+    print("\n" + "="*60)
+    print("METRICS SUMMARY")
+    print("="*60)
+    print("\nFiltered metrics (with MIN_PAIRED filter):")
+    print("  - SN_pair_count")
+    print("  - TP_pair_count")
+    print("  - SN_accept_count")
+    print("  - req_share %")
+    print("\nNo-filter metrics (nf - without MIN_PAIRED):")
+    print("  - SN_pair_count_nf")
+    print("  - TP_pair_count_nf")
+    print("  - SN_accept_count_nf")
+    print("  - req_share_nf %")
+    print("\nUpdated formulas using nf metrics:")
+    print("  - pairing % = SN_pair_count_nf / req_count")
+    print("  - acceptance % = SN_accept_count_nf / SN_pair_count_nf")
 
 
 if __name__ == "__main__":
