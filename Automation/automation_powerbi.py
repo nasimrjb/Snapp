@@ -13,9 +13,9 @@ OUTPUT_FROM = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_cod
 OUTPUT_TIME = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_time_bucket.csv"
 OUTPUT_DISTANCE = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_distance_bucket.csv"
 
-OUTPUT_FROM_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded_agg.csv"
-OUTPUT_TIME_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_time_bucket_agg.csv"
-OUTPUT_DISTANCE_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_distance_bucket_agg.csv"
+OUTPUT_FROM_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded_agg.xlsx"
+OUTPUT_TIME_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_time_bucket_agg.xlsx"
+OUTPUT_DISTANCE_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_distance_bucket_agg.xlsx"
 
 MIN_PAIRED = 9
 ADJ1 = 0.75
@@ -451,13 +451,16 @@ def add_aggregation_rows(df, group_dims, third_dim):
     """
     result_rows = []
 
+    # Get all columns from original dataframe to maintain order and types
+    all_columns = df.columns.tolist()
+
     # Group by the first two dimensions
     for group_keys, group_df in df.groupby(group_dims, dropna=False):
         # Add all original rows from this group
         result_rows.append(group_df)
 
-        # Create aggregation row
-        agg_row = {}
+        # Create aggregation row as a dictionary with proper column order
+        agg_row = {col: np.nan for col in all_columns}
 
         # Set the group dimension values
         if len(group_dims) == 2:
@@ -467,14 +470,14 @@ def add_aggregation_rows(df, group_dims, third_dim):
         # Set third dimension to 'Total'
         agg_row[third_dim] = 'Total'
 
-        # Aggregate counts (sum)
+        # Aggregate counts (sum) - ensure they stay as numeric
         count_cols = ['total_rides', 'SN_paired', 'TP_paired', 'SN_accepted', 'TP_accepted',
                       'req_count', 'NMV_sum', 'ride_sum', 'SN_pair_count_nf', 'TP_pair_count_nf',
                       'SN_accept_count_nf', 'SN_pair_count', 'TP_pair_count', 'SN_accept_count']
 
         for col in count_cols:
             if col in group_df.columns:
-                agg_row[col] = group_df[col].sum()
+                agg_row[col] = float(group_df[col].sum())
 
         # Aggregate averages (mean of non-null values)
         avg_cols = [c for c in group_df.columns if c.startswith(
@@ -484,59 +487,59 @@ def add_aggregation_rows(df, group_dims, third_dim):
             if col in group_df.columns:
                 non_null_values = group_df[col].dropna()
                 if len(non_null_values) > 0:
-                    agg_row[col] = non_null_values.mean()
+                    agg_row[col] = float(non_null_values.mean())
                 else:
                     agg_row[col] = np.nan
 
         # Recalculate percentage columns for the total row
         if 'total_rides' in agg_row and agg_row['total_rides'] > 0:
             if 'SN_paired' in agg_row:
-                agg_row['SN_pairing %'] = agg_row['SN_paired'] / \
-                    agg_row['total_rides']
+                agg_row['SN_pairing %'] = float(
+                    agg_row['SN_paired'] / agg_row['total_rides'])
             if 'TP_paired' in agg_row:
-                agg_row['TP_pairing %'] = agg_row['TP_paired'] / \
-                    agg_row['total_rides']
+                agg_row['TP_pairing %'] = float(
+                    agg_row['TP_paired'] / agg_row['total_rides'])
 
         if 'SN_paired' in agg_row and agg_row['SN_paired'] > 0:
             if 'SN_accepted' in agg_row:
-                agg_row['SN_acceptance %'] = agg_row['SN_accepted'] / \
-                    agg_row['SN_paired']
+                agg_row['SN_acceptance %'] = float(
+                    agg_row['SN_accepted'] / agg_row['SN_paired'])
 
         if 'TP_paired' in agg_row and agg_row['TP_paired'] > 0:
             if 'TP_accepted' in agg_row:
-                agg_row['TP_acceptance %'] = agg_row['TP_accepted'] / \
-                    agg_row['TP_paired']
+                agg_row['TP_acceptance %'] = float(
+                    agg_row['TP_accepted'] / agg_row['TP_paired'])
 
         if 'req_count' in agg_row and agg_row['req_count'] > 0:
             if 'SN_pair_count_nf' in agg_row:
-                agg_row['pairing %'] = agg_row['SN_pair_count_nf'] / \
-                    agg_row['req_count']
+                agg_row['pairing %'] = float(
+                    agg_row['SN_pair_count_nf'] / agg_row['req_count'])
 
         if 'SN_pair_count_nf' in agg_row and agg_row['SN_pair_count_nf'] > 0:
             if 'SN_accept_count_nf' in agg_row:
-                agg_row['acceptance %'] = agg_row['SN_accept_count_nf'] / \
-                    agg_row['SN_pair_count_nf']
+                agg_row['acceptance %'] = float(
+                    agg_row['SN_accept_count_nf'] / agg_row['SN_pair_count_nf'])
 
         # Recalculate ratio columns
         if 'pairing %' in agg_row and agg_row['pairing %'] > 0:
             if 'SN_pairing %' in agg_row:
-                agg_row['pairing_ratio'] = agg_row['SN_pairing %'] / \
-                    agg_row['pairing %']
+                agg_row['pairing_ratio'] = float(
+                    agg_row['SN_pairing %'] / agg_row['pairing %'])
 
         if 'acceptance %' in agg_row and agg_row['acceptance %'] > 0:
             if 'SN_acceptance %' in agg_row:
-                agg_row['acceptance_ratio'] = agg_row['SN_acceptance %'] / \
-                    agg_row['acceptance %']
+                agg_row['acceptance_ratio'] = float(
+                    agg_row['SN_acceptance %'] / agg_row['acceptance %'])
 
         if 'pairing_ratio' in agg_row and agg_row['pairing_ratio'] > 0:
             if 'TP_pairing %' in agg_row:
-                agg_row['pairing_3'] = agg_row['TP_pairing %'] / \
-                    agg_row['pairing_ratio']
+                agg_row['pairing_3'] = float(
+                    agg_row['TP_pairing %'] / agg_row['pairing_ratio'])
 
         if 'acceptance_ratio' in agg_row and agg_row['acceptance_ratio'] > 0:
             if 'TP_acceptance %' in agg_row:
-                agg_row['acceptance_3'] = agg_row['TP_acceptance %'] / \
-                    agg_row['acceptance_ratio']
+                agg_row['acceptance_3'] = float(
+                    agg_row['TP_acceptance %'] / agg_row['acceptance_ratio'])
 
         # Recalculate req_share % for total row (should be 100%)
         if 'req_count' in agg_row:
@@ -546,16 +549,22 @@ def add_aggregation_rows(df, group_dims, third_dim):
         # Recalculate SN_finished_ride for total row
         if 'SN_accepted' in agg_row and 'ride_sum' in agg_row:
             if agg_row['SN_accepted'] > MIN_PAIRED:
-                agg_row['SN_finished_ride'] = agg_row['ride_sum']
+                agg_row['SN_finished_ride'] = float(agg_row['ride_sum'])
             else:
                 agg_row['SN_finished_ride'] = np.nan
 
-        # Create DataFrame from aggregation row
-        agg_df = pd.DataFrame([agg_row])
+        # Create DataFrame from aggregation row with explicit column order
+        agg_df = pd.DataFrame([agg_row], columns=all_columns)
         result_rows.append(agg_df)
 
     # Concatenate all rows
     result = pd.concat(result_rows, ignore_index=True)
+
+    # Ensure numeric columns stay numeric (convert any that became object type)
+    for col in result.columns:
+        if col not in [group_dims[0], group_dims[1], third_dim]:
+            # Try to convert to numeric, keep as-is if it fails
+            result[col] = pd.to_numeric(result[col], errors='ignore')
 
     # Sort by group dimensions and third dimension (Total should come last)
     sort_cols = group_dims + [third_dim]
@@ -626,7 +635,7 @@ def main():
         third_dim='from_coded'
     )
     table_from_agg = format_output(table_from_agg)
-    table_from_agg.to_csv(OUTPUT_FROM_AGG, index=False, encoding="utf-8-sig")
+    table_from_agg.to_excel(OUTPUT_FROM_AGG, index=False, engine='openpyxl')
     print(f"  ✓ Saved: {OUTPUT_FROM_AGG} ({len(table_from_agg):,} rows)")
 
     # -------- time_bucket table --------
@@ -647,7 +656,7 @@ def main():
         third_dim='time_bucket'
     )
     table_time_agg = format_output(table_time_agg)
-    table_time_agg.to_csv(OUTPUT_TIME_AGG, index=False, encoding="utf-8-sig")
+    table_time_agg.to_excel(OUTPUT_TIME_AGG, index=False, engine='openpyxl')
     print(f"  ✓ Saved: {OUTPUT_TIME_AGG} ({len(table_time_agg):,} rows)")
 
     # -------- distance_bucket table --------
@@ -668,8 +677,8 @@ def main():
         third_dim='distance_bucket'
     )
     table_distance_agg = format_output(table_distance_agg)
-    table_distance_agg.to_csv(
-        OUTPUT_DISTANCE_AGG, index=False, encoding="utf-8-sig")
+    table_distance_agg.to_excel(
+        OUTPUT_DISTANCE_AGG, index=False, engine='openpyxl')
     print(
         f"  ✓ Saved: {OUTPUT_DISTANCE_AGG} ({len(table_distance_agg):,} rows)")
 

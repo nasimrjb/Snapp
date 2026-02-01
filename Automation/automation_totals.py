@@ -108,6 +108,39 @@ agg1 = (
     .reset_index()
 )
 
+
+# Calculate rolling 2-week average of pairing_3 and acceptance_3
+df1_sorted = df1.sort_values(["city", "week_number"])
+pairing_3_rolling = (
+    df1_sorted
+    .groupby(["week_number", "city"], observed=True)
+    ["pairing_ratio"]
+    .mean()
+    .groupby("city")
+    .rolling(2)
+    .mean()
+    .reset_index(level=0, drop=True)
+    .reset_index()
+    .rename(columns={"pairing_ratio": "pairing_3_avg"})
+)
+
+acceptance_3_rolling = (
+    df1_sorted
+    .groupby(["week_number", "city"], observed=True)
+    ["acceptance_ratio"]
+    .mean()
+    .groupby("city")
+    .rolling(2)
+    .mean()
+    .reset_index(level=0, drop=True)
+    .reset_index()
+    .rename(columns={"acceptance_ratio": "acceptance_3_avg"})
+)
+
+# Merge these into agg1
+agg1 = agg1.merge(pairing_3_rolling, on=["week_number", "city"], how="left")
+agg1 = agg1.merge(acceptance_3_rolling, on=["week_number", "city"], how="left")
+
 # =========================
 # Aggregate SECOND CSV
 # =========================
@@ -151,9 +184,9 @@ df["pairing_model_4"] = safe_div(
 df["acceptance_model_4"] = safe_div(
     df["total_TP_acceptance_pct"], df["total_acceptance_ratio"])
 df["pairing_model_5"] = safe_div(
-    df["total_TP_pairing_pct"], df["avg_pairing_ratio"])
+    df["total_TP_pairing_pct"], df["pairing_3_avg"])
 df["acceptance_model_5"] = safe_div(
-    df["total_TP_acceptance_pct"], df["avg_acceptance_ratio"])
+    df["total_TP_acceptance_pct"], df["acceptance_3_avg"])
 
 # =========================
 # WoW Calculations
