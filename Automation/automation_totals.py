@@ -4,10 +4,10 @@ import numpy as np
 # =========================
 # Paths
 # =========================
-CSV1_PATH = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
-CSV2_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_5.csv"
+CSV1_PATH = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_from_coded.csv"
+CSV2_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\real_data_5.csv"
 
-OUTPUT_PATH = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_aggregated_models.xlsx"
+OUTPUT_PATH = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_aggregated_models.xlsx"
 
 # =========================
 # Utility Functions

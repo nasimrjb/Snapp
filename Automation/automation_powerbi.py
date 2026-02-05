@@ -5,17 +5,17 @@ import numpy as np
 # Paths
 # ============================
 
-CSV_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\carpooling_export_5.csv"
-EXCEL_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\Route.xlsx"
-REAL_DATA_PATH = r"D:\OneDrive\Work\Automation Project\DataSources\real_data_5.csv"
+CSV_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\carpooling_export_5.csv"
+EXCEL_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\Route.xlsx"
+REAL_DATA_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\real_data_5.csv"
 
-OUTPUT_FROM = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded.csv"
-OUTPUT_TIME = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_time_bucket.csv"
+OUTPUT_FROM = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_from_coded.csv"
+OUTPUT_TIME = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_time_bucket.csv"
 OUTPUT_DISTANCE = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_distance_bucket.csv"
 
-OUTPUT_FROM_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_from_coded_agg.xlsx"
-OUTPUT_TIME_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_time_bucket_agg.xlsx"
-OUTPUT_DISTANCE_AGG = r"D:\OneDrive\Work\Automation Project\Outputs\weekly_city_distance_bucket_agg.xlsx"
+OUTPUT_FROM_AGG = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_from_coded_agg.xlsx"
+OUTPUT_TIME_AGG = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_time_bucket_agg.xlsx"
+OUTPUT_DISTANCE_AGG = r"D:\OneDrive\Work\Cancellation\Outputs\weekly_city_distance_bucket_agg.xlsx"
 
 MIN_PAIRED = 9
 ADJ1 = 0.75
