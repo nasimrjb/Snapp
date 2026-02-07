@@ -39,15 +39,35 @@ def load_data(csv_path, excel_path, real_data_path):
 
 
 def prepare_base_df(df):
+    # --- Flag columns to normalize ---
     flag_cols = ['snapp_paired', 'tapsi_paired',
                  'snapp_accepted', 'tapsi_accepted']
 
+    # --- Normalize flags to lowercase & strip whitespace ---
+    for col in flag_cols:
+        df[col] = df[col].astype(str).str.strip().str.lower()
+
+    # --- Remove logically impossible acceptance rows ---
+    invalid_mask = (
+        ((df['snapp_paired'] == 'no') & (df['snapp_accepted'] == 'yes')) |
+        ((df['tapsi_paired'] == 'no') & (df['tapsi_accepted'] == 'yes'))
+    )
+    removed_rows = invalid_mask.sum()
+    if removed_rows > 0:
+        print(f"🧹 Removed {removed_rows:,} invalid acceptance rows")
+    df = df.loc[~invalid_mask].copy()
+
+    # --- Drop duplicates and reset index ---
     df = df.drop_duplicates().reset_index(drop=True)
+
+    # --- Assign unique ride IDs ---
     df['ride_id'] = np.arange(len(df))
 
+    # --- Convert flags to boolean ---
     for col in flag_cols:
-        df[col] = df[col].eq('Yes')
+        df[col] = df[col].eq('yes')
 
+    # --- Fare columns ---
     fare_cols = [
         'snapp_before_fare', 'snapp_after_fare',
         'tapsi_before_fare', 'tapsi_after_fare',
@@ -58,6 +78,7 @@ def prepare_base_df(df):
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
     return df
+
 
 # ============================
 # Real Data Prep
