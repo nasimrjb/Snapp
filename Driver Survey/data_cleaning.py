@@ -174,7 +174,7 @@ for col_idx, col_name in enumerate(raw_df.columns):
                     "column": col_name,
                     "row": row_idx + 2,
                     "raw_value": part,
-                    "allowed": " | ".join(allowed_raw)
+                    "allowed": ",,".join(allowed_raw)
                 })
                 replaced_parts.append(part)
             else:
@@ -192,8 +192,8 @@ for col_idx, col_name in enumerate(raw_df.columns):
     codebook_rows.append({
         "column_name": col_name,
         "question_text": normalize_text(expected_headers[col_idx]),
-        "allowed_answers": " | ".join(allowed_raw),
-        "replaced_answers": " | ".join(replaced_vals)
+        "allowed_answers": ",,".join(allowed_raw),
+        "replaced_answers": ",,".join(replaced_vals)
     })
 
 # ============================================================
