@@ -168,8 +168,8 @@ loc_map = {
     "more_than_7_years": 96,
 }
 
-df["snapp_LOC"] = df["snapp_age"].map(loc_map)
-df["tapsi_LOC"] = df["tapsi_age"].map(loc_map)
+df["snapp_LOC"] = df["age_snapp"].map(loc_map)
+df["tapsi_LOC"] = df["age_tapsi"].map(loc_map)
 
 # ===============================
 # AGE GROUP
@@ -225,19 +225,8 @@ def build_incentive_category(df, platform):
         f"incentive_type_earning_based_commfree_{platform}",
     ]
 
-    money_used = (
-        df[money_cols]
-        .replace("", np.nan)
-        .notna()
-        .any(axis=1)
-    )
-
-    commfree_used = (
-        df[commfree_cols]
-        .replace("", np.nan)
-        .notna()
-        .any(axis=1)
-    )
+    money_used = df[money_cols].replace("", np.nan).notna().any(axis=1)
+    commfree_used = df[commfree_cols].replace("", np.nan).notna().any(axis=1)
 
     return np.select(
         [
