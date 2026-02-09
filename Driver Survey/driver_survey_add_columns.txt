@@ -4,14 +4,23 @@ the files you are going to process is in these location:
 "D:\OneDrive\Work\Driver Survey\Outputs\codebook.xlsx"
 
 
-cleaned_survey is a cleaned data of a survey questionnaire. column headers are question titles and rows are answers of drivers of Snapp and Tapsi
-"column_name" and "replaced_answers" are column titles and allowed answers of "cleaned_survey" that are stored as headers in codebook excel file.
+cleaned_survey is a cleaned data of a survey questionnaire.its column headers are question titles and rows are recorded answers of drivers of Snapp and Tapsi
+in codebook.xlsx, "column_name" and "replaced_answers" are column titles and allowed answers of "cleaned_survey.xlsx" that are stored as headers in codebook excel file. allowed answers are in one cell and can be separated by this delimiter ;;
 if 'replaced_answers' is "customized" it means it has customized answers not single/multiple choice. ignore them for now.
 
-add these columns to cleaned_survey.xlsx
+
+add these columns to my data 'cleaned_survey' an save the output to 'cleaned_survey.xlsx' at this location: 
+
+"D:\OneDrive\Work\Driver Survey\Outputs\survey_raw_database.xlsx"
+
+
+#######################################################################
 
 joint_by_signup = if "age_tapsi" = "Not Registered" then 0 , else 1
 active_joint = if ("age_tapsi" ="Not Registered" OR "trip_count_tapsi" = "0") then 0 else 1
+
+______________
+
 
 "ride_snapp" and "ride_tapsi":
 "trip_count_snapp" and "trip_count_tapsi" should be mapped to numeric values below, based on their text values:
@@ -28,9 +37,34 @@ active_joint = if ("age_tapsi" ="Not Registered" OR "trip_count_tapsi" = "0") th
 بیش از 80 سفر	80
 
 
+______________
 
-also for "trip_count_commfree_discount_tapsi", create a column named "commfree_ride_tapsi" and do this mapping:
 
+
+also for "trip_count_commfree_discount_tapsi", create a column named "commfree_disc_ride_tapsi" and do this mapping:
+same, for "trip_count_commfree_discount_snapp", create a column named "commfree_disc_ride_snapp" and do this mapping:
+
+<5	2.5
+5_10	7.5
+11_20	15
+21_30	25
+31_40	35
+41_50	45
+51_60	55
+61_70	65
+71_80	75
+>80	80
+
+______________
+
+diff_commfree_snapp: "ride_snapp"- "commfree_disc_ride_tapsi"
+diff_commfree_tapsi: "ride_tapsi" - "commfree_disc_ride_tapsi"
+
+______________
+
+
+commfree_tapsi: if diff_commfree_tapsi <0  then "ride_tapsi" else map "trip_count_commfree_discount_tapsi" like this:
+commfree_snapp: if diff_commfree_snapp <0  then "ride_snapp" else map "trip_count_commfree_discount_snapp" like this:
 
 <5	2.5
 5_10	7.5
@@ -43,22 +77,8 @@ also for "trip_count_commfree_discount_tapsi", create a column named "commfree_r
 71_80	75
 >80	80
 
+______________
 
-add a new column "commfree_ride_snapp":
-
-if "ride_tapsi" - "commfree_ride_tapsi" <0  then "ride_snapp" else map "trip_count_commfree_discount_snapp" like this:
-
-
-<5	2.5
-5_10	7.5
-11_20	15
-21_30	25
-31_40	35
-41_50	45
-51_60	55
-61_70	65
-71_80	75
->80	80
 
 add new column "incentive_snapp" and "incentive_tapsi"
 will be calculated with incentive_rial_details_snapp , incentive_rial_details_tapsi mapping:
@@ -80,6 +100,8 @@ will be calculated with incentive_rial_details_snapp , incentive_rial_details_ta
  1 میلیون تا 1 میلیون و 250 هزار تومان	 11,250,000 
 
 
+______________
+
 
 create "wheel" column by mapping "magical_window_income_tapsi" values to these numbers:
 
@@ -93,4 +115,123 @@ create "wheel" column by mapping "magical_window_income_tapsi" values to these n
  100 تا 150 هزار تومان 	1,250,000
 
 
+_______________
+
+create "cooperation_type" based on mapping values of 'active_time' as below:
+
+
+
+few hours/month	Part-Time
+<20hour/mo	Part-Time
+5_20hour/week	Part-Time
+20_40h/week	Part-Time
+>40h/week	Full-Time
+8_12hour/day	Full-Time
+>12h/day	Full-Time
+
+
+create "snapp_LOC" and "tapsi_LOC" based on "snapp_age" , "tapsi_age" by this mapping:
+
+Not Registered	0
+Not Registered	0
+Not Registered	0
+less_than_1_month	0.5
+1_to_3_months	2
+less_than_3_months	2
+less_than_5_trips	2.5
+3_to_6_months	4.5
+5_and_10_trips	7.5
+6_to_12_months	9
+6_months_to_1_year	9
+6_months_to_1_year	9
+10_and_20_trips	15
+1_to_2_years	18
+1_to_3_years	24
+20_and_30_trips	25
+2_to_3_years	30
+30_and_40_trips	35
+3_to_4_years	42
+40_and_50_trips	45
+3_to_5_years	48
+more_than_4_years	54
+50_and_60_trips	55
+60_and_70_trips	65
+5_to_7_years	72
+70_and_80_trips	75
+more_than_80_trips	80
+more_than_7_years	96
+
+
+
+create 'age_group' based on values from "age" column:
+
+<18	18_to_35
+18_25	18_to_35
+26_35	18_to_35
+36_45	more_than_35
+46_55	more_than_35
+56_65	more_than_35
+>65	more_than_35
+
+create "edu" based on values from "education" column:
+
+
+HighSchool_Diploma	0
+College Degree	1
+Bachelors	1
+Masters	1
+MD/PhD	1
+
+create "marr_stat" based on values from marital_status like this:
+
+Single	0
+Married	1
+
+
+
+
+also, create two incentive columns by altering this code (same concept used for my dataframe:)
+
+def build_incentive_category(df, platform):
+    money_cols = [
+        f"incentive_type_pay_after_ride_{platform}",
+        f"incentive_type_inc_guarantee_{platform}",
+    ]
+
+    commfree_cols = [
+        f"incentive_type_ride_based_commfree_{platform}",
+        f"incentive_type_earning_based_commfree_{platform}",
+    ]
+
+    money_used = (
+        df[money_cols]
+        .replace("", np.nan)
+        .notna()
+        .any(axis=1)
+    )
+
+    commfree_used = (
+        df[commfree_cols]
+        .replace("", np.nan)
+        .notna()
+        .any(axis=1)
+    )
+
+    return np.select(
+        [
+            money_used & commfree_used,
+            money_used,
+            commfree_used,
+        ],
+        [
+            "Money & Free-commission",
+            "Money",
+            "Free-Commission",
+        ],
+        default=""
+    )
+
+
+df["incentive_category_snapp"] = build_incentive_category(df, "snapp")
+df["incentive_category_tapsi"] = build_incentive_category(df, "tapsi")
 
