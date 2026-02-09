@@ -1,0 +1,96 @@
+the files you are going to process is in these location:
+
+"D:\OneDrive\Work\Driver Survey\Outputs\cleaned_survey.xlsx"
+"D:\OneDrive\Work\Driver Survey\Outputs\codebook.xlsx"
+
+
+cleaned_survey is a cleaned data of a survey questionnaire. column headers are question titles and rows are answers of drivers of Snapp and Tapsi
+"column_name" and "replaced_answers" are column titles and allowed answers of "cleaned_survey" that are stored as headers in codebook excel file.
+if 'replaced_answers' is "customized" it means it has customized answers not single/multiple choice. ignore them for now.
+
+add these columns to cleaned_survey.xlsx
+
+joint_by_signup = if "age_tapsi" = "Not Registered" then 0 , else 1
+active_joint = if ("age_tapsi" ="Not Registered" OR "trip_count_tapsi" = "0") then 0 else 1
+
+"ride_snapp" and "ride_tapsi":
+"trip_count_snapp" and "trip_count_tapsi" should be mapped to numeric values below, based on their text values:
+
+کمتر از 5 سفر 		2.5
+بین 5 تا 10 سفر	7.5
+بین 11 تا 20 سفر	15
+بین 21 تا 30 سفر	25
+بین 31 تا 40 سفر	35
+بین 41 تا 50 سفر	45
+بین 51 تا 60 سفر	55
+بین 61 تا 70 سفر	65
+بین 71 تا 80 سفر	75
+بیش از 80 سفر	80
+
+
+
+also for "trip_count_commfree_discount_tapsi", create a column named "commfree_ride_tapsi" and do this mapping:
+
+
+<5	2.5
+5_10	7.5
+11_20	15
+21_30	25
+31_40	35
+41_50	45
+51_60	55
+61_70	65
+71_80	75
+>80	80
+
+
+add a new column "commfree_ride_snapp":
+
+if "ride_tapsi" - "commfree_ride_tapsi" <0  then "ride_snapp" else map "trip_count_commfree_discount_snapp" like this:
+
+
+<5	2.5
+5_10	7.5
+11_20	15
+21_30	25
+31_40	35
+41_50	45
+51_60	55
+61_70	65
+71_80	75
+>80	80
+
+add new column "incentive_snapp" and "incentive_tapsi"
+will be calculated with incentive_rial_details_snapp , incentive_rial_details_tapsi mapping:
+
+کمتر از 100 هزار تومان	 500,000 
+100 تا 200 هزار تومان	 1,500,000 
+ 200 تا 400 هزار تومان	 3,000,000 
+ 400 تا 600 هزار تومان	 5,000,000 
+ 600 تا 800 هزار تومان	 7,000,000 
+ 800 هزار تا 1 میلیون تومان	 9,000,000 
+ بین 1 میلیون تا 1 میلیون و 250 هزار تومان	 11,250,000 
+ بین 1 میلیون و 250 هزار تا 1 میلیون و 500 هزار تومان	13,750,000
+ بیش از 1 میلیون و 500 هزار تومان	 17,500,000 
+ 250 تا 500 هزار تومان	 3,750,000 
+ 100 تا 250 هزار تومان	 1,750,000 
+ 500 تا 750 هزار تومان	 6,250,000 
+ 1 میلیون و 250 هزار تا 1 میلیون و 500 هزار تومان	 13,750,000 
+ 750 هزار تا 1 میلیون تومان	 8,750,000 
+ 1 میلیون تا 1 میلیون و 250 هزار تومان	 11,250,000 
+
+
+
+create "wheel" column by mapping "magical_window_income_tapsi" values to these numbers:
+
+ 40 تا 60 هزار تومان 	500,000
+ بالای 200 هزار تومان	2,000,000
+کمتر از 20 هزار تومان 	150,000
+ 20 تا 40 هزار تومان 	300,000
+ 80 تا 100 هزار تومان 	900,000
+ 150 تا 200 هزار تومان 	1,750,000
+ 60 تا 80 هزار تومان 	700,000
+ 100 تا 150 هزار تومان 	1,250,000
+
+
+
