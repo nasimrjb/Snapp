@@ -3,8 +3,8 @@ import pandas as pd
 # =========================
 # Paths
 # =========================
-INPUT_EXCEL_PATH = r"D:\OneDrive\Work\Driver Survey\Data\Raw_Data.xlsx"
-OUTPUT_EXCEL_PATH = r"D:\OneDrive\Work\Driver Survey\Data\Raw_Data_unique.xlsx"
+INPUT_EXCEL_PATH = r"C:\Users\Snapp\Desktop\survey_raw_database.xlsx"
+OUTPUT_EXCEL_PATH = r"C:\Users\Snapp\Desktop\survey_raw_database_unique.xlsx"
 
 # =========================
 # Read Excel file

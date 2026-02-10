@@ -1,0 +1,32 @@
+
+money_cols = [
+    "incentive_type_pay_after_ride_snapp",
+    "incentive_type_inc_guarantee_snapp",
+	"incentive_type_pay_after_ride_tapsi",
+    "incentive_type_inc_guarantee_tapsi",
+
+]
+
+commfree_cols = [
+    "incentive_type_ride_based_commfree_snapp",
+    "incentive_type_earning_based_commfree_snapp",
+	"incentive_type_ride_based_commfree_tapsi",
+    "incentive_type_earning_based_commfree_tapsi",
+]
+
+money_used = df[money_cols].notna().any(axis=1)
+commfree_used = df[commfree_cols].notna().any(axis=1)
+
+df["incentive_category"] = np.select(
+    [
+        money_used & commfree_used,
+        money_used,
+        commfree_used,
+    ],
+    [
+        "Money & Free-commission",
+        "Money",
+        "Free-Commission",
+    ],
+    default=""
+)
