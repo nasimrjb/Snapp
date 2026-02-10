@@ -19,7 +19,7 @@ SHEET_REPLACED_ANSWERS = "replaced_answers"
 # ============================================================
 
 PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
-MULTI_SELECT_DELIMITERS = [";", "،"]
+MULTI_SELECT_DELIMITERS = [";", "؛"]
 
 
 def normalize_text(val) -> str:
