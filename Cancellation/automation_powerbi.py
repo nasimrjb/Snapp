@@ -48,14 +48,14 @@ def prepare_base_df(df):
         df[col] = df[col].astype(str).str.strip().str.lower()
 
     # --- Remove logically impossible acceptance rows ---
-    invalid_mask = (
-        ((df['snapp_paired'] == 'no') & (df['snapp_accepted'] == 'yes')) |
-        ((df['tapsi_paired'] == 'no') & (df['tapsi_accepted'] == 'yes'))
-    )
-    removed_rows = invalid_mask.sum()
-    if removed_rows > 0:
-        print(f"🧹 Removed {removed_rows:,} invalid acceptance rows")
-    df = df.loc[~invalid_mask].copy()
+    # invalid_mask = (
+    #     ((df['snapp_paired'] == 'no') & (df['snapp_accepted'] == 'yes')) |
+    #     ((df['tapsi_paired'] == 'no') & (df['tapsi_accepted'] == 'yes'))
+    # )
+    # removed_rows = invalid_mask.sum()
+    # if removed_rows > 0:
+    #     print(f"🧹 Removed {removed_rows:,} invalid acceptance rows")
+    # df = df.loc[~invalid_mask].copy()
 
     # --- Drop duplicates and reset index ---
     df = df.drop_duplicates().reset_index(drop=True)
@@ -287,7 +287,6 @@ def aggregate_real_data(df, dims):
         df.groupby(dims, dropna=False)
         .agg(
             req_count=('reqs', 'sum'),
-            unique_req_count=('unique_requests', 'sum'),
             SN_pair_count_raw=('pairs', 'sum'),
             SN_accept_count_raw=('accepts', 'sum'),
             NMV_sum=('NMV', 'sum'),
@@ -336,18 +335,16 @@ def calculate_derived_metrics(agg, first_two_dims):
     agg = agg.copy()
 
     req_group_sum = agg.groupby(first_two_dims)['req_count'].transform('sum')
-    unique_req_group_sum = agg.groupby(first_two_dims)[
-        'unique_req_count'].transform('sum')
 
     agg['req_share %'] = np.where(
         req_group_sum > MIN_PAIRED,
-        agg['unique_req_count'] / unique_req_group_sum,
+        agg['req_count'] / req_group_sum,
         np.nan
     )
 
     agg['req_share_nf %'] = np.where(
         req_group_sum > 0,
-        agg['unique_req_count'] / unique_req_group_sum,
+        agg['req_count'] / req_group_sum,
         np.nan
     )
 
