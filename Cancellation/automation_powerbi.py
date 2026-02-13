@@ -287,6 +287,7 @@ def aggregate_real_data(df, dims):
         df.groupby(dims, dropna=False)
         .agg(
             req_count=('reqs', 'sum'),
+            unique_req_count=('unique_requests', 'sum'),
             SN_pair_count_raw=('pairs', 'sum'),
             SN_accept_count_raw=('accepts', 'sum'),
             NMV_sum=('NMV', 'sum'),
@@ -335,16 +336,18 @@ def calculate_derived_metrics(agg, first_two_dims):
     agg = agg.copy()
 
     req_group_sum = agg.groupby(first_two_dims)['req_count'].transform('sum')
+    unique_req_group_sum = agg.groupby(first_two_dims)[
+        'unique_req_count'].transform('sum')
 
     agg['req_share %'] = np.where(
         req_group_sum > MIN_PAIRED,
-        agg['req_count'] / req_group_sum,
+        agg['unique_req_count'] / unique_req_group_sum,
         np.nan
     )
 
     agg['req_share_nf %'] = np.where(
         req_group_sum > 0,
-        agg['req_count'] / req_group_sum,
+        agg['unique_req_count'] / unique_req_group_sum,
         np.nan
     )
 
