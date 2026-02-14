@@ -67,7 +67,7 @@ df2["city"] = df2["org_city_id"].map(city_map)
 num_cols_df1 = [
     "SN_pairing %", "TP_pairing %",
     "SN_acceptance %", "TP_acceptance %",
-    "req_share %", "pairing_ra  tio", "acceptance_ratio",
+    "req_share %", "pairing_ratio", "acceptance_ratio",
     "pairing_3", "acceptance_3",
     "SN_pair_count", "TP_pair_count"
 ]
