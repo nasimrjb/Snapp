@@ -5,9 +5,9 @@ import numpy as np
 # Paths
 # ============================
 
-CSV_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\carpooling_export_6.csv"
+CSV_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\carpooling_export_7.csv"
 EXCEL_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\Route.xlsx"
-REAL_DATA_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\real_data_6.csv"
+REAL_DATA_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\real_data_7.csv"
 
 OUTPUT_FROM = r"D:\OneDrive\Work\Cancellation\Outputs\Origin_Bucket.csv"
 OUTPUT_TIME = r"D:\OneDrive\Work\Cancellation\Outputs\Time_Bucket.csv"
@@ -463,229 +463,160 @@ def format_output(df):
 
 def add_aggregation_rows(df, group_dims, third_dim, real_data_df):
     """
-    Add 'Total' aggregation rows for each combination of the first two dimensions.
-
-    Args:
-        df: DataFrame with the detailed data
-        group_dims: List of the first two dimension columns (e.g., ['week_number', 'city'])
-        third_dim: Name of the third dimension column to aggregate over
-        real_data_df: The original real_data DataFrame to calculate totals from
+    Add 'Total' aggregation rows with specific Weighted Average logic.
     """
     result_rows = []
 
-    # Get all columns from original dataframe to maintain order and types
+    # --- Helper: Weighted Average ---
+    def get_weighted_avg(sub_df, val_col, weight_col):
+        """
+        Calculates weighted average, automatically dropping rows where 
+        either the value or the weight is NaN (respecting MIN_PAIRED filters).
+        """
+        if val_col not in sub_df.columns or weight_col not in sub_df.columns:
+            return np.nan
+
+        # Filter for valid rows only
+        clean_df = sub_df[[val_col, weight_col]].dropna()
+
+        if len(clean_df) == 0 or clean_df[weight_col].sum() == 0:
+            return np.nan
+
+        return np.average(clean_df[val_col], weights=clean_df[weight_col])
+
+    # Get all columns
     all_columns = df.columns.tolist()
 
     # Group by the first two dimensions
     for group_keys, group_df in df.groupby(group_dims, dropna=False):
-        # Add all original rows from this group
+
+        # 1. Keep original rows
         result_rows.append(group_df)
 
-        # Create aggregation row as a dictionary with proper column order
+        # 2. Initialize Total Row
         agg_row = {col: np.nan for col in all_columns}
 
-        # Set the group dimension values
         if len(group_dims) == 2:
             agg_row[group_dims[0]] = group_keys[0]
             agg_row[group_dims[1]] = group_keys[1]
-
-        # Set third dimension to 'Total'
         agg_row[third_dim] = 'Total'
 
-        # Filter real_data for this specific week_number and city
+        # --- Filter Real Data for Direct Calculations ---
         week_val = group_keys[0]
         city_val = group_keys[1]
-
-        real_data_filtered = real_data_df[
+        rd_filtered = real_data_df[
             (real_data_df['week_number'] == week_val) &
             (real_data_df['city'] == city_val)
         ]
 
-        # Sum directly from real_data for SN_finished_ride and AOV_real_SN
-        total_ride = real_data_filtered['ride'].sum()
-        total_nmv = real_data_filtered['NMV'].sum()
-
-        # Aggregate counts (sum) - ensure they stay as numeric
-        count_cols = ['total_rides', 'SN_paired', 'TP_paired', 'SN_accepted', 'TP_accepted',
-                      'req_count', 'NMV_sum', 'ride_sum', 'SN_pair_count_nf', 'TP_pair_count_nf',
-                      'SN_accept_count_nf', 'SN_pair_count', 'TP_pair_count', 'SN_accept_count']
-
-        for col in count_cols:
+        # =========================================
+        # A. Simple Sums (Counts)
+        # =========================================
+        sum_cols = [
+            'total_rides', 'SN_paired', 'TP_paired', 'SN_accepted', 'TP_accepted',
+            'req_count', 'NMV_sum', 'ride_sum',
+            'SN_pair_count_nf', 'TP_pair_count_nf', 'SN_accept_count_nf',
+            'SN_pair_count', 'TP_pair_count', 'SN_accept_count'
+        ]
+        for col in sum_cols:
             if col in group_df.columns:
-                agg_row[col] = float(group_df[col].sum())
+                # returns 0 if empty, preserve float
+                agg_row[col] = group_df[col].sum(min_count=0)
 
-        # Calculate weighted averages using sumproduct for ECO metrics
-        # AVG_SN_ECO (total): sumproduct of (total_rides, AVG_SN_ECO) / sum of total_rides
-        if 'Avg_SN_Eco' in group_df.columns and 'total_rides' in group_df.columns:
-            valid_mask = group_df['Avg_SN_Eco'].notna(
-            ) & group_df['total_rides'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'total_rides'] *
-                              group_df.loc[valid_mask, 'Avg_SN_Eco']).sum()
-                sum_rides = group_df.loc[valid_mask, 'total_rides'].sum()
-                agg_row['Avg_SN_Eco'] = float(
-                    sumproduct / sum_rides) if sum_rides > 0 else np.nan
+        # =========================================
+        # B. Real Data Direct Calculations
+        # =========================================
+        # pairing % = sum(pairs) / sum(reqs) (from real_data)
+        rd_pairs = rd_filtered['pairs'].sum()
+        rd_reqs = rd_filtered['reqs'].sum()
+        agg_row['pairing %'] = (rd_pairs / rd_reqs) if rd_reqs > 0 else np.nan
 
-        # AVG_TP_ECO (total): sumproduct of (total_rides, AVG_TP_ECO) / sum of total_rides
-        if 'Avg_TP_Eco' in group_df.columns and 'total_rides' in group_df.columns:
-            valid_mask = group_df['Avg_TP_Eco'].notna(
-            ) & group_df['total_rides'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'total_rides'] *
-                              group_df.loc[valid_mask, 'Avg_TP_Eco']).sum()
-                sum_rides = group_df.loc[valid_mask, 'total_rides'].sum()
-                agg_row['Avg_TP_Eco'] = float(
-                    sumproduct / sum_rides) if sum_rides > 0 else np.nan
+        # acceptance % = sum(accepts) / sum(pairs) (from real_data)
+        rd_accepts = rd_filtered['accepts'].sum()
+        agg_row['acceptance %'] = (
+            rd_accepts / rd_pairs) if rd_pairs > 0 else np.nan
 
-        # AVG_SN_Carp (total): sumproduct of (SN_accepted, AVG_SN_Carp) / sum of SN_accepted
-        if 'Avg_SN_carp' in group_df.columns and 'SN_accepted' in group_df.columns:
-            valid_mask = group_df['Avg_SN_carp'].notna(
-            ) & group_df['SN_accepted'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'SN_accepted'] *
-                              group_df.loc[valid_mask, 'Avg_SN_carp']).sum()
-                sum_accepted = group_df.loc[valid_mask, 'SN_accepted'].sum()
-                agg_row['Avg_SN_carp'] = float(
-                    sumproduct / sum_accepted) if sum_accepted > 0 else np.nan
-
-        # AVG_TP_Carp (total): sumproduct of (TP_accepted, AVG_TP_Carp) / sum of TP_accepted
-        if 'Avg_TP_carp' in group_df.columns and 'TP_accepted' in group_df.columns:
-            valid_mask = group_df['Avg_TP_carp'].notna(
-            ) & group_df['TP_accepted'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'TP_accepted'] *
-                              group_df.loc[valid_mask, 'Avg_TP_carp']).sum()
-                sum_accepted = group_df.loc[valid_mask, 'TP_accepted'].sum()
-                agg_row['Avg_TP_carp'] = float(
-                    sumproduct / sum_accepted) if sum_accepted > 0 else np.nan
-
-        # AVG_SN_Psub (total): sumproduct of (SN_accepted, AVG_SN_Psub) / sum of SN_accepted
-        if 'Avg_SN_Psub' in group_df.columns and 'SN_accepted' in group_df.columns:
-            valid_mask = group_df['Avg_SN_Psub'].notna(
-            ) & group_df['SN_accepted'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'SN_accepted'] *
-                              group_df.loc[valid_mask, 'Avg_SN_Psub']).sum()
-                sum_accepted = group_df.loc[valid_mask, 'SN_accepted'].sum()
-                agg_row['Avg_SN_Psub'] = float(
-                    sumproduct / sum_accepted) if sum_accepted > 0 else np.nan
-
-        # AVG_TP_Psub (total): sumproduct of (TP_accepted, AVG_TP_Psub) / sum of TP_accepted
-        if 'Avg_TP_Psub' in group_df.columns and 'TP_accepted' in group_df.columns:
-            valid_mask = group_df['Avg_TP_Psub'].notna(
-            ) & group_df['TP_accepted'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'TP_accepted'] *
-                              group_df.loc[valid_mask, 'Avg_TP_Psub']).sum()
-                sum_accepted = group_df.loc[valid_mask, 'TP_accepted'].sum()
-                agg_row['Avg_TP_Psub'] = float(
-                    sumproduct / sum_accepted) if sum_accepted > 0 else np.nan
-
-        # SN_finished_ride (total): sum of "ride" from real_data directly
+        # SN_finished_ride & AOV_real_SN
+        total_ride = rd_filtered['ride'].sum()
+        total_nmv = rd_filtered['NMV'].sum()
         agg_row['SN_finished_ride'] = float(total_ride)
+        agg_row['AOV_real_SN'] = (
+            total_nmv / total_ride) if total_ride > 0 else np.nan
 
-        # AOV_real_SN (total): sum of "NMV" / sum of "ride" from real_data directly
-        if total_ride > 0:
-            agg_row['AOV_real_SN'] = float(total_nmv / total_ride)
-        else:
-            agg_row['AOV_real_SN'] = np.nan
+        # =========================================
+        # C. Weighted Averages (The 4 Specific Fixes)
+        # =========================================
 
-        # AOV_T/R (total): sumproduct of (AOV_T/R, SN_finished_ride) / sum(SN_finished_ride)
-        if 'AOV_T_R' in group_df.columns and 'SN_finished_ride' in group_df.columns:
-            valid_mask = group_df['AOV_T_R'].notna(
-            ) & group_df['SN_finished_ride'].notna()
-            if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'SN_finished_ride'] *
-                              group_df.loc[valid_mask, 'AOV_T_R']).sum()
-                sum_finished = group_df.loc[valid_mask,
-                                            'SN_finished_ride'].sum()
-                agg_row['AOV_T_R'] = float(
-                    sumproduct / sum_finished) if sum_finished > 0 else np.nan
+        # 1. SN_pairing % (Weight: req_share %)
+        agg_row['SN_pairing %'] = get_weighted_avg(
+            group_df, 'SN_pairing %', 'req_share %')
 
-        # AOV_est: recalculate based on total row values
-        if 'AOV_T_R' in agg_row and agg_row['AOV_T_R'] is not np.nan and agg_row['AOV_T_R'] > 0:
-            if 'Avg_TP_carp' in agg_row and agg_row['Avg_TP_carp'] is not np.nan:
-                agg_row['AOV_est'] = float(
-                    agg_row['Avg_TP_carp'] / agg_row['AOV_T_R'])
-            else:
-                agg_row['AOV_est'] = np.nan
-        else:
-            agg_row['AOV_est'] = np.nan
+        # 2. TP_pairing % (Weight: req_share %)
+        agg_row['TP_pairing %'] = get_weighted_avg(
+            group_df, 'TP_pairing %', 'req_share %')
 
-        # Recalculate percentage columns for the total row
-        if 'total_rides' in agg_row and agg_row['total_rides'] > 0:
-            if 'SN_paired' in agg_row:
-                agg_row['SN_pairing %'] = float(
-                    agg_row['SN_paired'] / agg_row['total_rides'])
-            if 'TP_paired' in agg_row:
-                agg_row['TP_pairing %'] = float(
-                    agg_row['TP_paired'] / agg_row['total_rides'])
+        # 3. SN_acceptance % (Weight: SN_pair_count)
+        agg_row['SN_acceptance %'] = get_weighted_avg(
+            group_df, 'SN_acceptance %', 'SN_pair_count')
 
-        if 'SN_paired' in agg_row and agg_row['SN_paired'] > 0:
-            if 'SN_accepted' in agg_row:
-                agg_row['SN_acceptance %'] = float(
-                    agg_row['SN_accepted'] / agg_row['SN_paired'])
+        # 4. TP_acceptance % (Weight: TP_pair_count)
+        agg_row['TP_acceptance %'] = get_weighted_avg(
+            group_df, 'TP_acceptance %', 'TP_pair_count')
 
-        if 'TP_paired' in agg_row and agg_row['TP_paired'] > 0:
-            if 'TP_accepted' in agg_row:
-                agg_row['TP_acceptance %'] = float(
-                    agg_row['TP_accepted'] / agg_row['TP_paired'])
+        # =========================================
+        # D. Other Weighted Averages
+        # =========================================
 
-        if 'req_count' in agg_row and agg_row['req_count'] > 0:
-            if 'SN_pair_count_nf' in agg_row:
-                agg_row['pairing %'] = float(
-                    agg_row['SN_pair_count_nf'] / agg_row['req_count'])
+        # Other metrics weighted by req_share %
+        for col in ['pairing_ratio', 'acceptance_ratio', 'pairing_3', 'acceptance_3']:
+            agg_row[col] = get_weighted_avg(group_df, col, 'req_share %')
 
-        if 'SN_pair_count_nf' in agg_row and agg_row['SN_pair_count_nf'] > 0:
-            if 'SN_accept_count_nf' in agg_row:
-                agg_row['acceptance %'] = float(
-                    agg_row['SN_accept_count_nf'] / agg_row['SN_pair_count_nf'])
+        # Fares weighted by Rides/Accepted
+        fare_weights = {
+            'Avg_SN_Eco': 'total_rides',
+            'Avg_TP_Eco': 'total_rides',
+            'Avg_SN_carp': 'SN_accepted',
+            'Avg_SN_Psub': 'SN_accepted',
+            'Avg_TP_carp': 'TP_accepted',
+            'Avg_TP_Psub': 'TP_accepted',
+            'AOV_T_R': 'SN_finished_ride'
+        }
+        for col, weight in fare_weights.items():
+            agg_row[col] = get_weighted_avg(group_df, col, weight)
 
-        # Recalculate ratio columns
-        if 'pairing %' in agg_row and agg_row['pairing %'] > 0:
-            if 'SN_pairing %' in agg_row:
-                agg_row['pairing_ratio'] = float(
-                    agg_row['SN_pairing %'] / agg_row['pairing %'])
+        # =========================================
+        # E. Final Cleanup
+        # =========================================
 
-        if 'acceptance %' in agg_row and agg_row['acceptance %'] > 0:
-            if 'SN_acceptance %' in agg_row:
-                agg_row['acceptance_ratio'] = float(
-                    agg_row['SN_acceptance %'] / agg_row['acceptance %'])
+        # Recalculate AOV_est from total row values
+        if pd.notna(agg_row.get('AOV_T_R')) and agg_row['AOV_T_R'] > 0 and pd.notna(agg_row.get('Avg_TP_carp')):
+            agg_row['AOV_est'] = agg_row['Avg_TP_carp'] / agg_row['AOV_T_R']
 
-        if 'pairing_ratio' in agg_row and agg_row['pairing_ratio'] > 0:
-            if 'TP_pairing %' in agg_row:
-                agg_row['pairing_3'] = float(
-                    agg_row['TP_pairing %'] / agg_row['pairing_ratio'])
+        # Total req_share is always 100%
+        agg_row['req_share %'] = 1.0
+        agg_row['req_share_nf %'] = 1.0
 
-        if 'acceptance_ratio' in agg_row and agg_row['acceptance_ratio'] > 0:
-            if 'TP_acceptance %' in agg_row:
-                agg_row['acceptance_3'] = float(
-                    agg_row['TP_acceptance %'] / agg_row['acceptance_ratio'])
-
-        # Recalculate req_share % for total row (should be 100%)
-        if 'req_count' in agg_row:
-            agg_row['req_share %'] = 1.0  # Total is always 100%
-            agg_row['req_share_nf %'] = 1.0
-
-        # Create DataFrame from aggregation row with explicit column order
+        # Create DataFrame row
         agg_df = pd.DataFrame([agg_row], columns=all_columns)
         result_rows.append(agg_df)
 
-    # Concatenate all rows
+    # Concatenate
     result = pd.concat(result_rows, ignore_index=True)
 
-    # Ensure numeric columns stay numeric (convert any that became object type)
+    # Ensure numeric types
     for col in result.columns:
         if col not in [group_dims[0], group_dims[1], third_dim]:
-            # Try to convert to numeric, keep as-is if it fails
             result[col] = pd.to_numeric(result[col], errors='ignore')
 
-    # Sort by group dimensions and third dimension (Total should come last)
+    # Sort
     sort_cols = group_dims + [third_dim]
-    result = result.sort_values(by=sort_cols, key=lambda x: x.map(
-        lambda v: (0, v) if v != 'Total' else (1, v)))
+    result = result.sort_values(
+        by=sort_cols,
+        key=lambda x: x.map(lambda v: (0, v) if v != 'Total' else (1, v))
+    )
 
     return result.reset_index(drop=True)
+
 
 # ============================
 # Builder
