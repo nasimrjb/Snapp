@@ -400,6 +400,8 @@ def add_aov_metrics_for_from_table(df):
     df['SN_finished_ride'] = pd.to_numeric(
         df['SN_finished_ride'], errors='coerce')
 
+    df['SN_finished_ride_raw'] = df['ride_sum']
+
     return df
 
 # ============================
@@ -593,9 +595,9 @@ def add_aggregation_rows(df, group_dims, third_dim, real_data_df):
         # AOV_T/R (total): sumproduct of (AOV_T/R, SN_finished_ride) / sum(SN_finished_ride)
         if 'AOV_T_R' in group_df.columns and 'SN_finished_ride' in group_df.columns:
             valid_mask = group_df['AOV_T_R'].notna(
-            ) & group_df['SN_finished_ride'].notna()
+            ) & group_df['SN_finished_ride_raw'].notna()
             if valid_mask.any():
-                sumproduct = (group_df.loc[valid_mask, 'SN_finished_ride'] *
+                sumproduct = (group_df.loc[valid_mask, 'SN_finished_ride_raw'] *
                               group_df.loc[valid_mask, 'AOV_T_R']).sum()
                 sum_finished = group_df.loc[valid_mask,
                                             'SN_finished_ride'].sum()
