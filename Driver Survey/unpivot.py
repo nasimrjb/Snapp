@@ -8,7 +8,7 @@ RAW_SURVEY_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_raw_database.x
 MULTIPLE_CHOICE_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\multiple_choice.xlsx"
 
 OUTPUT_WIDE_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_clean_wide.xlsx"
-OUTPUT_MC_LONG_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_multiple_choice_long.xlsx"
+OUTPUT_MC_LONG_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\long.xlsx"
 OUTPUT_CODEBOOK_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_codebook.csv"
 
 
