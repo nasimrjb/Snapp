@@ -208,10 +208,6 @@ df = df.round(4)
 # =========================
 cols_order = [
     "week_number", "city",
-    "total_SN_pairing_pct", "total_TP_pairing_pct",
-    "total_SN_acceptance_pct", "total_TP_acceptance_pct",
-    "total_pairing_ratio", "total_acceptance_ratio",
-    "total_pairing_pct", "total_acceptance_pct",
     "pairing_model_1", "pairing_model_1_WoW",
     "acceptance_model_1", "acceptance_model_1_WoW",
     "pairing_model_2", "pairing_model_2_WoW",

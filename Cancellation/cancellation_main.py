@@ -21,6 +21,30 @@ MIN_PAIRED = 9
 ADJ1 = 0.75
 ADJ2 = 0.8
 
+
+# ============================
+# Columns Hidden Only in Outputs
+# ============================
+
+HIDDEN_OUTPUT_COLUMNS = [
+    'NMV_sum',
+    'ride_sum',
+    'SN_pair_count_nf',
+    'TP_pair_count_nf',
+    'SN_accept_count_nf',
+    'req_share_nf %'
+]
+
+
+def drop_for_export(df):
+    """
+    Keeps full pipeline intact,
+    removes selected columns ONLY when saving.
+    """
+    return df.drop(
+        columns=[c for c in HIDDEN_OUTPUT_COLUMNS if c in df.columns],
+        errors="ignore"
+    )
 # ============================
 # Load
 # ============================
@@ -637,17 +661,14 @@ def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
 
 
 def main():
+
     print("\n" + "="*60)
     print("CARPOOLING DATA AGGREGATION - WITH TOTAL ROWS")
     print("="*60)
 
     df, routes_df, real_data_df = load_data(
-        CSV_PATH, EXCEL_PATH, REAL_DATA_PATH)
-
-    print(f"\n📊 Data loaded:")
-    print(f"  Carpooling data: {len(df):,} rows")
-    print(f"  Routes:          {len(routes_df):,} routes")
-    print(f"  Real data:       {len(real_data_df):,} rows")
+        CSV_PATH, EXCEL_PATH, REAL_DATA_PATH
+    )
 
     df = (
         df.pipe(prepare_base_df)
@@ -657,12 +678,7 @@ def main():
 
     real_data_df = prepare_real_data(real_data_df)
 
-    print("\n" + "="*60)
-    print("GENERATING OUTPUT TABLES")
-    print("="*60)
-
     # -------- from_coded table --------
-    print("\n[1/6] Building from_coded table...")
     table_from = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'from_coded'],
@@ -670,10 +686,11 @@ def main():
     )
     table_from = add_aov_metrics_for_from_table(table_from)
     table_from = add_ratio_columns(table_from)
-    table_from.to_csv(OUTPUT_FROM, index=False, encoding="utf-8-sig")
-    print(f"  ✓ Saved: {OUTPUT_FROM} ({len(table_from):,} rows)")
 
-    print("\n[2/6] Building from_coded table with aggregations...")
+    drop_for_export(table_from).to_csv(
+        OUTPUT_FROM, index=False, encoding="utf-8-sig"
+    )
+
     table_from_agg = add_aggregation_rows(
         table_from,
         group_dims=['week_number', 'city'],
@@ -681,21 +698,23 @@ def main():
         real_data_df=real_data_df
     )
     table_from_agg = format_output(table_from_agg)
-    table_from_agg.to_excel(OUTPUT_FROM_AGG, index=False, engine='openpyxl')
-    print(f"  ✓ Saved: {OUTPUT_FROM_AGG} ({len(table_from_agg):,} rows)")
+
+    drop_for_export(table_from_agg).to_excel(
+        OUTPUT_FROM_AGG, index=False, engine='openpyxl'
+    )
 
     # -------- time_bucket table --------
-    print("\n[3/6] Building time_bucket table...")
     table_time = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'time_bucket'],
         first_two_dims=['week_number', 'city']
     )
     table_time = add_ratio_columns(table_time)
-    table_time.to_csv(OUTPUT_TIME, index=False, encoding="utf-8-sig")
-    print(f"  ✓ Saved: {OUTPUT_TIME} ({len(table_time):,} rows)")
 
-    print("\n[4/6] Building time_bucket table with aggregations...")
+    drop_for_export(table_time).to_csv(
+        OUTPUT_TIME, index=False, encoding="utf-8-sig"
+    )
+
     table_time_agg = add_aggregation_rows(
         table_time,
         group_dims=['week_number', 'city'],
@@ -703,21 +722,23 @@ def main():
         real_data_df=real_data_df
     )
     table_time_agg = format_output(table_time_agg)
-    table_time_agg.to_excel(OUTPUT_TIME_AGG, index=False, engine='openpyxl')
-    print(f"  ✓ Saved: {OUTPUT_TIME_AGG} ({len(table_time_agg):,} rows)")
+
+    drop_for_export(table_time_agg).to_excel(
+        OUTPUT_TIME_AGG, index=False, engine='openpyxl'
+    )
 
     # -------- distance_bucket table --------
-    print("\n[5/6] Building distance_bucket table...")
     table_distance = build_table_with_real_data(
         df, real_data_df,
         dims=['week_number', 'city', 'distance_bucket'],
         first_two_dims=['week_number', 'city']
     )
     table_distance = add_ratio_columns(table_distance)
-    table_distance.to_csv(OUTPUT_DISTANCE, index=False, encoding="utf-8-sig")
-    print(f"  ✓ Saved: {OUTPUT_DISTANCE} ({len(table_distance):,} rows)")
 
-    print("\n[6/6] Building distance_bucket table with aggregations...")
+    drop_for_export(table_distance).to_csv(
+        OUTPUT_DISTANCE, index=False, encoding="utf-8-sig"
+    )
+
     table_distance_agg = add_aggregation_rows(
         table_distance,
         group_dims=['week_number', 'city'],
@@ -725,33 +746,12 @@ def main():
         real_data_df=real_data_df
     )
     table_distance_agg = format_output(table_distance_agg)
-    table_distance_agg.to_excel(
-        OUTPUT_DISTANCE_AGG, index=False, engine='openpyxl')
-    print(
-        f"  ✓ Saved: {OUTPUT_DISTANCE_AGG} ({len(table_distance_agg):,} rows)")
 
-    print("\n" + "="*60)
-    print("✅ AGGREGATION COMPLETE")
-    print("="*60)
-    print("\nOriginal output files:")
-    print(f"  1. {OUTPUT_FROM}")
-    print(f"  2. {OUTPUT_TIME}")
-    print(f"  3. {OUTPUT_DISTANCE}")
-    print("\nAggregated output files (with Total rows):")
-    print(f"  4. {OUTPUT_FROM_AGG}")
-    print(f"  5. {OUTPUT_TIME_AGG}")
-    print(f"  6. {OUTPUT_DISTANCE_AGG}")
+    drop_for_export(table_distance_agg).to_excel(
+        OUTPUT_DISTANCE_AGG, index=False, engine='openpyxl'
+    )
 
-    print("\n" + "="*60)
-    print("AGGREGATION SUMMARY")
-    print("="*60)
-    print("\nEach aggregated file includes:")
-    print("  - All original detailed rows")
-    print("  - 'Total' rows for each (week_number, city) combination")
-    print("  - Counts are summed")
-    print("  - Weighted averages using sumproduct for ECO/Carp/Psub")
-    print("  - AOV_real_SN & SN_finished_ride calculated from real_data directly")
-    print("  - Percentages are recalculated for totals")
+    print("\n✅ Aggregation complete. Internal metrics preserved. Reporting columns hidden.")
 
 
 if __name__ == "__main__":
