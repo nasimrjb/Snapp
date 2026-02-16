@@ -9,10 +9,6 @@ CSV_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\carpooling_export_7.csv"
 EXCEL_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\Route.xlsx"
 REAL_DATA_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\real_data_7.csv"
 
-OUTPUT_FROM = r"D:\OneDrive\Work\Cancellation\Outputs\Origin_Bucket.csv"
-OUTPUT_TIME = r"D:\OneDrive\Work\Cancellation\Outputs\Time_Bucket.csv"
-OUTPUT_DISTANCE = r"D:\OneDrive\Work\Cancellation\Outputs\Distance_Bucket.csv"
-
 OUTPUT_FROM_AGG = r"D:\OneDrive\Work\Cancellation\Outputs\Origin_Bucket_Agg.xlsx"
 OUTPUT_TIME_AGG = r"D:\OneDrive\Work\Cancellation\Outputs\Time_Bucket_Agg.xlsx"
 OUTPUT_DISTANCE_AGG = r"D:\OneDrive\Work\Cancellation\Outputs\Distance_Bucket_Agg.xlsx"
@@ -21,9 +17,8 @@ MIN_PAIRED = 9
 ADJ1 = 0.75
 ADJ2 = 0.8
 
-
 # ============================
-# Columns Hidden Only in Outputs
+# Columns Hidden in Outputs
 # ============================
 
 HIDDEN_OUTPUT_COLUMNS = [
@@ -37,18 +32,16 @@ HIDDEN_OUTPUT_COLUMNS = [
 
 
 def drop_for_export(df):
-    """
-    Keeps full pipeline intact,
-    removes selected columns ONLY when saving.
-    """
+    """Remove selected columns when saving."""
     return df.drop(
         columns=[c for c in HIDDEN_OUTPUT_COLUMNS if c in df.columns],
         errors="ignore"
     )
-# ============================
-# Load
-# ============================
 
+
+# ============================
+# Load Data
+# ============================
 
 def load_data(csv_path, excel_path, real_data_path):
     return (
@@ -57,21 +50,20 @@ def load_data(csv_path, excel_path, real_data_path):
         pd.read_csv(real_data_path, encoding="utf-8-sig")
     )
 
-# ============================
-# Base Prep
-# ============================
 
+# ============================
+# Base Preparation
+# ============================
 
 def prepare_base_df(df):
-    # --- Flag columns to normalize ---
     flag_cols = ['snapp_paired', 'tapsi_paired',
                  'snapp_accepted', 'tapsi_accepted']
 
-    # --- Normalize flags to lowercase & strip whitespace ---
+    # Normalize flags
     for col in flag_cols:
         df[col] = df[col].astype(str).str.strip().str.lower()
 
-   # --- Remove logically impossible acceptance rows - --
+    # Remove invalid acceptances
     invalid_mask = (
         ((df['snapp_paired'] == 'no') & (df['snapp_accepted'] == 'yes')) |
         ((df['tapsi_paired'] == 'no') & (df['tapsi_accepted'] == 'yes'))
@@ -81,17 +73,15 @@ def prepare_base_df(df):
         print(f"🧹 Removed {removed_rows:,} invalid acceptance rows")
     df = df.loc[~invalid_mask].copy()
 
-    # --- Drop duplicates and reset index ---
+    # Drop duplicates and assign ride IDs
     df = df.drop_duplicates().reset_index(drop=True)
-
-    # --- Assign unique ride IDs ---
     df['ride_id'] = np.arange(len(df))
 
-    # --- Convert flags to boolean ---
+    # Convert flags to boolean
     for col in flag_cols:
         df[col] = df[col].eq('yes')
 
-    # --- Fare columns ---
+    # Convert fare columns to numeric
     fare_cols = [
         'snapp_before_fare', 'snapp_after_fare',
         'tapsi_before_fare', 'tapsi_after_fare',
@@ -105,9 +95,8 @@ def prepare_base_df(df):
 
 
 # ============================
-# Real Data Prep
+# Real Data Preparation
 # ============================
-
 
 def prepare_real_data(df):
     city_mapping = {
@@ -119,12 +108,10 @@ def prepare_real_data(df):
 
     df = df.copy()
     df['city'] = df['org_city_id'].map(city_mapping)
-
     df = df.rename(columns={
         'Week_Num': 'week_number',
         'org_dist_id': 'from_coded'
     })
-
     df['from_coded'] = df['from_coded'].astype('Int64')
 
     for col in ['reqs', 'pairs', 'accepts', 'NMV', 'ride']:
@@ -132,16 +119,20 @@ def prepare_real_data(df):
 
     return df
 
+
 # ============================
 # Time Features
 # ============================
-
 
 def add_time_features(df):
     df['travel_date'] = pd.to_datetime(df['travel_date'], errors='coerce')
     df['travel_time_dt'] = pd.to_datetime(
         df['travel_time'], format='%H:%M:%S', errors='coerce')
 
+    # Extract year
+    df['year'] = df['travel_date'].dt.year
+
+    # Time bucket
     def bucket(dt):
         if pd.isna(dt):
             return None
@@ -158,15 +149,16 @@ def add_time_features(df):
 
     df['time_bucket'] = df['travel_time_dt'].apply(bucket)
 
+    # Week number
     df['week_number'] = df['travel_date'].dt.isocalendar().week.astype(int)
     df['week_number'] += (df['travel_date'].dt.weekday >= 5).astype(int)
 
     return df
 
+
 # ============================
 # Routes Merge
 # ============================
-
 
 def merge_routes(df, routes_df):
     routes_df = routes_df.copy()
@@ -190,10 +182,10 @@ def merge_routes(df, routes_df):
         text = text.replace('\ufeff', '').replace(
             '\xa0', '').replace('\u202a', '')
         text = text.replace('\u202b', '').replace('\u202c', '')
-        text = text.replace(' ', '')
-        text = text.lower()
+        text = text.replace(' ', '').lower()
         return text
 
+    # Normalize addresses
     df['from_original'] = df['from'].copy()
     df['to_original'] = df['to'].copy()
     df['from_normalized'] = df['from'].apply(normalize_text)
@@ -202,13 +194,14 @@ def merge_routes(df, routes_df):
     routes_df['from_normalized'] = routes_df['from'].apply(normalize_text)
     routes_df['to_normalized'] = routes_df['to'].apply(normalize_text)
 
+    # Remove rows with missing addresses
     initial_len = len(df)
     df = df[df['from_normalized'].notna() & df['to_normalized'].notna()].copy()
     removed = initial_len - len(df)
-
     if removed > 0:
         print(f"ℹ️  Removed {removed} rows with missing/invalid addresses")
 
+    # Prepare routes lookup
     routes_df = routes_df[routes_df['from_normalized'].notna(
     ) & routes_df['to_normalized'].notna()].copy()
     routes_df = routes_df.drop_duplicates(
@@ -218,12 +211,13 @@ def merge_routes(df, routes_df):
     routes_lookup = routes_df[['from_normalized', 'to_normalized',
                                'distance_bucket', 'from_coded', 'to_coded']].copy()
 
+    # Merge
     merged = df.merge(routes_lookup, on=[
                       'from_normalized', 'to_normalized'], how='left')
 
+    # Report matching statistics
     unmatched_count = merged['from_coded'].isna().sum()
     matched_count = merged['from_coded'].notna().sum()
-
     print(f"\n✓ Merge Results:")
     print(
         f"  Matched:   {matched_count:,} rows ({matched_count/len(merged)*100:.1f}%)")
@@ -245,14 +239,15 @@ def merge_routes(df, routes_df):
         columns=['from_normalized', 'to_normalized', 'from_original', 'to_original'])
     return merged
 
+
 # ============================
 # Main Aggregation
 # ============================
 
-
 def aggregate_metrics(df, dims):
     df = df.copy()
 
+    # Conditional fare columns
     df['snapp_before_fare_acc'] = df['snapp_before_fare'].where(
         df['snapp_accepted'])
     df['snapp_after_fare_acc'] = df['snapp_after_fare'].where(
@@ -265,48 +260,39 @@ def aggregate_metrics(df, dims):
     agg = (
         df.groupby(dims, dropna=False)
         .agg(
+            year=('year', 'first'),  # Keep year from the group
             total_rides=('ride_id', 'nunique'),
             SN_paired=('snapp_paired', 'sum'),
             TP_paired=('tapsi_paired', 'sum'),
             SN_accepted=('snapp_accepted', 'sum'),
             TP_accepted=('tapsi_accepted', 'sum'),
-
             Avg_SN_carp=('snapp_before_fare_acc', 'mean'),
             Avg_SN_Psub=('snapp_after_fare_acc', 'mean'),
             Avg_TP_carp=('tapsi_before_fare_acc', 'mean'),
             Avg_TP_Psub=('tapsi_after_fare_acc', 'mean'),
-
             Avg_SN_Eco=('snapp_normal_fare', 'mean'),
             Avg_TP_Eco=('tapsi_normal_fare', 'mean'),
         )
         .reset_index()
     )
 
+    # Calculate percentages
     agg['SN_pairing %'] = agg['SN_paired'] / agg['total_rides']
     agg['TP_pairing %'] = agg['TP_paired'] / agg['total_rides']
-
     agg['SN_acceptance %'] = np.where(
-        agg['SN_paired'] > 0,
-        agg['SN_accepted'] / agg['SN_paired'],
-        np.nan
-    )
-
+        agg['SN_paired'] > 0, agg['SN_accepted'] / agg['SN_paired'], np.nan)
     agg['TP_acceptance %'] = np.where(
-        agg['TP_paired'] > 0,
-        agg['TP_accepted'] / agg['TP_paired'],
-        np.nan
-    )
+        agg['TP_paired'] > 0, agg['TP_accepted'] / agg['TP_paired'], np.nan)
 
     return agg
+
 
 # ============================
 # Real Data Aggregation
 # ============================
 
-
 def aggregate_real_data(df, dims):
     df = df.dropna(subset=dims)
-
     return (
         df.groupby(dims, dropna=False)
         .agg(
@@ -331,29 +317,18 @@ def merge_real_data_with_main(main_agg, real_agg, dims):
     merged['SN_accept_count_nf'] = merged['SN_accept_count_raw']
 
     merged['SN_pair_count'] = np.where(
-        merged['SN_paired'] > MIN_PAIRED,
-        merged['SN_pair_count_raw'],
-        np.nan
-    )
-
+        merged['SN_paired'] > MIN_PAIRED, merged['SN_pair_count_raw'], np.nan)
     merged['TP_pair_count'] = np.where(
-        merged['TP_paired'] > MIN_PAIRED,
-        merged['SN_pair_count_raw'],
-        np.nan
-    )
-
+        merged['TP_paired'] > MIN_PAIRED, merged['SN_pair_count_raw'], np.nan)
     merged['SN_accept_count'] = np.where(
-        merged['SN_paired'] > MIN_PAIRED,
-        merged['SN_accept_count_raw'],
-        np.nan
-    )
+        merged['SN_paired'] > MIN_PAIRED, merged['SN_accept_count_raw'], np.nan)
 
     return merged.drop(columns=['SN_pair_count_raw', 'SN_accept_count_raw'])
+
 
 # ============================
 # Derived Metrics
 # ============================
-
 
 def calculate_derived_metrics(agg, first_two_dims):
     agg = agg.copy()
@@ -361,35 +336,20 @@ def calculate_derived_metrics(agg, first_two_dims):
     req_group_sum = agg.groupby(first_two_dims)['req_count'].transform('sum')
 
     agg['req_share %'] = np.where(
-        req_group_sum > MIN_PAIRED,
-        agg['req_count'] / req_group_sum,
-        np.nan
-    )
-
+        req_group_sum > MIN_PAIRED, agg['req_count'] / req_group_sum, np.nan)
     agg['req_share_nf %'] = np.where(
-        req_group_sum > 0,
-        agg['req_count'] / req_group_sum,
-        np.nan
-    )
-
+        req_group_sum > 0, agg['req_count'] / req_group_sum, np.nan)
     agg['pairing %'] = np.where(
-        agg['req_count'] > 0,
-        agg['SN_pair_count_nf'] / agg['req_count'],
-        np.nan
-    )
-
+        agg['req_count'] > 0, agg['SN_pair_count_nf'] / agg['req_count'], np.nan)
     agg['acceptance %'] = np.where(
-        agg['SN_pair_count_nf'] > 0,
-        agg['SN_accept_count_nf'] / agg['SN_pair_count_nf'],
-        np.nan
-    )
+        agg['SN_pair_count_nf'] > 0, agg['SN_accept_count_nf'] / agg['SN_pair_count_nf'], np.nan)
 
     return agg
 
-# ============================
-# AOV (from_coded only)
-# ============================
 
+# ============================
+# AOV Metrics
+# ============================
 
 def add_aov_metrics_for_from_table(df):
     df = df.copy()
@@ -426,47 +386,32 @@ def add_aov_metrics_for_from_table(df):
 
     return df
 
+
 # ============================
 # Ratio Columns
 # ============================
-
 
 def add_ratio_columns(df):
     df = df.copy()
 
     df['pairing_ratio'] = np.where(
-        df['pairing %'] > 0,
-        df['SN_pairing %'] / df['pairing %'],
-        np.nan
-    )
-
+        df['pairing %'] > 0, df['SN_pairing %'] / df['pairing %'], np.nan)
     df['acceptance_ratio'] = np.where(
-        df['acceptance %'] > 0,
-        df['SN_acceptance %'] / df['acceptance %'],
-        np.nan
-    )
-
+        df['acceptance %'] > 0, df['SN_acceptance %'] / df['acceptance %'], np.nan)
     df['pairing_3'] = np.where(
-        df['pairing_ratio'] > 0,
-        df['TP_pairing %'] / df['pairing_ratio'],
-        np.nan
-    )
-
+        df['pairing_ratio'] > 0, df['TP_pairing %'] / df['pairing_ratio'], np.nan)
     df['acceptance_3'] = np.where(
-        df['acceptance_ratio'] > 0,
-        df['TP_acceptance %'] / df['acceptance_ratio'],
-        np.nan
-    )
+        df['acceptance_ratio'] > 0, df['TP_acceptance %'] / df['acceptance_ratio'], np.nan)
 
     for col in ['pairing_ratio', 'acceptance_ratio', 'pairing_3', 'acceptance_3']:
         df[col] = pd.to_numeric(df[col], errors='coerce').round(3)
 
     return df
 
+
 # ============================
 # Formatting
 # ============================
-
 
 def format_output(df):
     pct_cols = [c for c in df.columns if '%' in c]
@@ -480,52 +425,41 @@ def format_output(df):
 
     return df
 
+
 # ============================
 # Add Aggregation Rows
 # ============================
 
-
 def add_aggregation_rows(df, group_dims, third_dim, real_data_df):
-    """
-    Add 'Total' aggregation rows with specific Weighted Average logic.
-    """
+    """Add 'Total' aggregation rows with weighted average logic."""
     result_rows = []
 
-    # --- Helper: Weighted Average ---
     def get_weighted_avg(sub_df, val_col, weight_col):
-        """
-        Calculates weighted average, automatically dropping rows where 
-        either the value or the weight is NaN (respecting MIN_PAIRED filters).
-        """
+        """Calculate weighted average, dropping NaN rows."""
         if val_col not in sub_df.columns or weight_col not in sub_df.columns:
             return np.nan
-
-        # Filter for valid rows only
         clean_df = sub_df[[val_col, weight_col]].dropna()
-
         if len(clean_df) == 0 or clean_df[weight_col].sum() == 0:
             return np.nan
-
         return np.average(clean_df[val_col], weights=clean_df[weight_col])
 
-    # Get all columns
     all_columns = df.columns.tolist()
 
-    # Group by the first two dimensions
     for group_keys, group_df in df.groupby(group_dims, dropna=False):
-
-        # 1. Keep original rows
         result_rows.append(group_df)
 
-        # 2. Initialize Total Row
+        # Initialize Total Row
         agg_row = {col: np.nan for col in all_columns}
-
         if len(group_dims) == 2:
             agg_row[group_dims[0]] = group_keys[0]
             agg_row[group_dims[1]] = group_keys[1]
         agg_row[third_dim] = 'Total'
 
-        # --- Filter Real Data for Direct Calculations ---
+        # Set year from the group
+        if 'year' in group_df.columns:
+            agg_row['year'] = group_df['year'].iloc[0]
+
+        # Filter real data
         week_val = group_keys[0]
         city_val = group_keys[1]
         rd_filtered = real_data_df[
@@ -533,9 +467,7 @@ def add_aggregation_rows(df, group_dims, third_dim, real_data_df):
             (real_data_df['city'] == city_val)
         ]
 
-        # =========================================
-        # A. Simple Sums (Counts)
-        # =========================================
+        # Simple sums
         sum_cols = [
             'total_rides', 'SN_paired', 'TP_paired', 'SN_accepted', 'TP_accepted',
             'req_count', 'NMV_sum', 'ride_sum',
@@ -544,58 +476,36 @@ def add_aggregation_rows(df, group_dims, third_dim, real_data_df):
         ]
         for col in sum_cols:
             if col in group_df.columns:
-                # returns 0 if empty, preserve float
                 agg_row[col] = group_df[col].sum(min_count=0)
 
-        # =========================================
-        # B. Real Data Direct Calculations
-        # =========================================
-        # pairing % = sum(pairs) / sum(reqs) (from real_data)
+        # Real data direct calculations
         rd_pairs = rd_filtered['pairs'].sum()
         rd_reqs = rd_filtered['reqs'].sum()
         agg_row['pairing %'] = (rd_pairs / rd_reqs) if rd_reqs > 0 else np.nan
 
-        # acceptance % = sum(accepts) / sum(pairs) (from real_data)
         rd_accepts = rd_filtered['accepts'].sum()
         agg_row['acceptance %'] = (
             rd_accepts / rd_pairs) if rd_pairs > 0 else np.nan
 
-        # SN_finished_ride & AOV_real_SN
         total_ride = rd_filtered['ride'].sum()
         total_nmv = rd_filtered['NMV'].sum()
         agg_row['SN_finished_ride'] = float(total_ride)
         agg_row['AOV_real_SN'] = (
             total_nmv / total_ride) if total_ride > 0 else np.nan
 
-        # =========================================
-        # C. Weighted Averages (The 4 Specific Fixes)
-        # =========================================
-
-        # 1. SN_pairing % (Weight: req_share %)
+        # Weighted averages
         agg_row['SN_pairing %'] = get_weighted_avg(
             group_df, 'SN_pairing %', 'req_share %')
-
-        # 2. TP_pairing % (Weight: req_share %)
         agg_row['TP_pairing %'] = get_weighted_avg(
             group_df, 'TP_pairing %', 'req_share %')
-
-        # 3. SN_acceptance % (Weight: SN_pair_count)
         agg_row['SN_acceptance %'] = get_weighted_avg(
             group_df, 'SN_acceptance %', 'SN_pair_count')
-
-        # 4. TP_acceptance % (Weight: TP_pair_count)
         agg_row['TP_acceptance %'] = get_weighted_avg(
             group_df, 'TP_acceptance %', 'TP_pair_count')
 
-        # =========================================
-        # D. Other Weighted Averages
-        # =========================================
-
-        # Other metrics weighted by req_share %
         for col in ['pairing_ratio', 'acceptance_ratio', 'pairing_3', 'acceptance_3']:
             agg_row[col] = get_weighted_avg(group_df, col, 'req_share %')
 
-        # Fares weighted by Rides/Accepted
         fare_weights = {
             'Avg_SN_Eco': 'total_rides',
             'Avg_TP_Eco': 'total_rides',
@@ -608,44 +518,59 @@ def add_aggregation_rows(df, group_dims, third_dim, real_data_df):
         for col, weight in fare_weights.items():
             agg_row[col] = get_weighted_avg(group_df, col, weight)
 
-        # =========================================
-        # E. Final Cleanup
-        # =========================================
-
-        # Recalculate AOV_est from total row values
+        # Recalculate AOV_est
         if pd.notna(agg_row.get('AOV_T_R')) and agg_row['AOV_T_R'] > 0 and pd.notna(agg_row.get('Avg_TP_carp')):
             agg_row['AOV_est'] = agg_row['Avg_TP_carp'] / agg_row['AOV_T_R']
 
-        # Total req_share is always 100%
         agg_row['req_share %'] = 1.0
         agg_row['req_share_nf %'] = 1.0
 
-        # Create DataFrame row
         agg_df = pd.DataFrame([agg_row], columns=all_columns)
         result_rows.append(agg_df)
 
-    # Concatenate
     result = pd.concat(result_rows, ignore_index=True)
 
     # Ensure numeric types
     for col in result.columns:
-        if col not in [group_dims[0], group_dims[1], third_dim]:
+        if col not in [group_dims[0], group_dims[1], third_dim, 'year']:
             result[col] = pd.to_numeric(result[col], errors='ignore')
-
-    # Sort
-    sort_cols = group_dims + [third_dim]
-    result = result.sort_values(
-        by=sort_cols,
-        key=lambda x: x.map(lambda v: (0, v) if v != 'Total' else (1, v))
-    )
 
     return result.reset_index(drop=True)
 
 
 # ============================
-# Builder
+# Reorder and Sort
 # ============================
 
+def reorder_and_sort_output(df, group_dims, third_dim):
+    """Move year to first position and sort by year, week_number, city, third_dim."""
+    if 'year' not in df.columns:
+        return df
+
+    # Reorder columns: year first, then group dimensions, then third dimension, then rest
+    priority_cols = ['year'] + group_dims + [third_dim]
+    other_cols = [c for c in df.columns if c not in priority_cols]
+    new_order = priority_cols + other_cols
+    df = df[new_order]
+
+    # Sort by year, week_number, city, and third_dim (with 'Total' at the end of each group)
+    def sort_key(col):
+        """Create sort key that puts 'Total' at the end."""
+        if col.name == third_dim:
+            return col.map(lambda v: (1, v) if v == 'Total' else (0, v))
+        return col
+
+    df = df.sort_values(
+        by=['year', 'week_number', 'city', third_dim],
+        key=sort_key
+    ).reset_index(drop=True)
+
+    return df
+
+
+# ============================
+# Builder
+# ============================
 
 def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
     main_agg = aggregate_metrics(df, dims)
@@ -655,20 +580,18 @@ def build_table_with_real_data(df, real_data_df, dims, first_two_dims):
     merged = format_output(merged)
     return merged
 
+
 # ============================
 # Main
 # ============================
 
-
 def main():
-
     print("\n" + "="*60)
     print("CARPOOLING DATA AGGREGATION - WITH TOTAL ROWS")
     print("="*60)
 
     df, routes_df, real_data_df = load_data(
-        CSV_PATH, EXCEL_PATH, REAL_DATA_PATH
-    )
+        CSV_PATH, EXCEL_PATH, REAL_DATA_PATH)
 
     df = (
         df.pipe(prepare_base_df)
@@ -687,10 +610,6 @@ def main():
     table_from = add_aov_metrics_for_from_table(table_from)
     table_from = add_ratio_columns(table_from)
 
-    drop_for_export(table_from).to_csv(
-        OUTPUT_FROM, index=False, encoding="utf-8-sig"
-    )
-
     table_from_agg = add_aggregation_rows(
         table_from,
         group_dims=['week_number', 'city'],
@@ -698,6 +617,8 @@ def main():
         real_data_df=real_data_df
     )
     table_from_agg = format_output(table_from_agg)
+    table_from_agg = reorder_and_sort_output(
+        table_from_agg, ['week_number', 'city'], 'from_coded')
 
     drop_for_export(table_from_agg).to_excel(
         OUTPUT_FROM_AGG, index=False, engine='openpyxl'
@@ -711,10 +632,6 @@ def main():
     )
     table_time = add_ratio_columns(table_time)
 
-    drop_for_export(table_time).to_csv(
-        OUTPUT_TIME, index=False, encoding="utf-8-sig"
-    )
-
     table_time_agg = add_aggregation_rows(
         table_time,
         group_dims=['week_number', 'city'],
@@ -722,6 +639,8 @@ def main():
         real_data_df=real_data_df
     )
     table_time_agg = format_output(table_time_agg)
+    table_time_agg = reorder_and_sort_output(
+        table_time_agg, ['week_number', 'city'], 'time_bucket')
 
     drop_for_export(table_time_agg).to_excel(
         OUTPUT_TIME_AGG, index=False, engine='openpyxl'
@@ -735,10 +654,6 @@ def main():
     )
     table_distance = add_ratio_columns(table_distance)
 
-    drop_for_export(table_distance).to_csv(
-        OUTPUT_DISTANCE, index=False, encoding="utf-8-sig"
-    )
-
     table_distance_agg = add_aggregation_rows(
         table_distance,
         group_dims=['week_number', 'city'],
@@ -746,12 +661,14 @@ def main():
         real_data_df=real_data_df
     )
     table_distance_agg = format_output(table_distance_agg)
+    table_distance_agg = reorder_and_sort_output(
+        table_distance_agg, ['week_number', 'city'], 'distance_bucket')
 
     drop_for_export(table_distance_agg).to_excel(
         OUTPUT_DISTANCE_AGG, index=False, engine='openpyxl'
     )
 
-    print("\n✅ Aggregation complete. Internal metrics preserved. Reporting columns hidden.")
+    print("\n✅ Aggregation complete.")
 
 
 if __name__ == "__main__":
