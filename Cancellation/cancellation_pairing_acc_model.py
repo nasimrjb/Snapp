@@ -4,7 +4,7 @@ import numpy as np
 # =========================
 # Paths
 # =========================
-CSV1_PATH = r"D:\OneDrive\Work\Cancellation\Outputs\Origin_Bucket.csv"
+CSV1_PATH = r"D:\OneDrive\Work\Cancellation\Outputs\Origin_Bucket_Agg.xlsx"
 CSV2_PATH = r"D:\OneDrive\Work\Cancellation\DataSources\real_data_7.csv"
 
 OUTPUT_PATH = r"D:\OneDrive\Work\Cancellation\Outputs\Origin_Aggregated_Models.xlsx"
@@ -47,7 +47,7 @@ def wow(series):
 # =========================
 # Load Data
 # =========================
-df1 = pd.read_csv(CSV1_PATH)
+df1 = pd.read_excel(CSV1_PATH)
 df2 = pd.read_csv(CSV2_PATH)
 
 # =========================
@@ -83,7 +83,7 @@ for c in num_cols_df2:
 # =========================
 agg1 = (
     df1
-    .groupby(["week_number", "city"], observed=True)
+    .groupby(["year", "week_number", "city"], observed=True)
     .apply(
         lambda g: pd.Series({
             "total_SN_pairing_pct": weighted_avg(g, "SN_pairing %", "req_share %"),
@@ -110,10 +110,10 @@ agg1 = (
 
 
 # Calculate rolling 2-week average of pairing_3 and acceptance_3
-df1_sorted = df1.sort_values(["city", "week_number"])
+df1_sorted = df1.sort_values(["city", "year", "week_number"])
 pairing_3_rolling = (
     df1_sorted
-    .groupby(["week_number", "city"], observed=True)
+    .groupby(["year", "week_number", "city"], observed=True)
     ["pairing_ratio"]
     .mean()
     .groupby("city")
@@ -126,7 +126,7 @@ pairing_3_rolling = (
 
 acceptance_3_rolling = (
     df1_sorted
-    .groupby(["week_number", "city"], observed=True)
+    .groupby(["year", "week_number", "city"], observed=True)
     ["acceptance_ratio"]
     .mean()
     .groupby("city")
@@ -138,8 +138,10 @@ acceptance_3_rolling = (
 )
 
 # Merge these into agg1
-agg1 = agg1.merge(pairing_3_rolling, on=["week_number", "city"], how="left")
-agg1 = agg1.merge(acceptance_3_rolling, on=["week_number", "city"], how="left")
+agg1 = agg1.merge(pairing_3_rolling, on=[
+                  "year", "week_number", "city"], how="left")
+agg1 = agg1.merge(acceptance_3_rolling, on=[
+                  "year", "week_number", "city"], how="left")
 
 # =========================
 # Aggregate SECOND CSV
@@ -168,7 +170,7 @@ df = pd.merge(
 # =========================
 df["hp1"] = safe_div(df["total_SN_pairing_pct"], df["total_pairing_pct"])
 df["ha1"] = safe_div(df["total_SN_acceptance_pct"], df["total_acceptance_pct"])
-df = df.sort_values(["city", "week_number"])
+df = df.sort_values(["city", "year", "week_number"])
 df["hp2"] = df.groupby("city")["hp1"].transform(lambda x: x.rolling(2).mean())
 df["ha2"] = df.groupby("city")["ha1"].transform(lambda x: x.rolling(2).mean())
 
@@ -191,7 +193,7 @@ df["acceptance_model_5"] = safe_div(
 # =========================
 # WoW Calculations
 # =========================
-model_cols = [c for c in df.columns if "model" in c]
+model_cols = [c for c in df.columns if "model" in c and "_WoW" not in c]
 for col in model_cols:
     df[col + "_WoW"] = df.groupby("city")[col].transform(wow)
 
@@ -199,33 +201,67 @@ for col in model_cols:
 # Round all numeric columns
 # =========================
 for col in df.columns:
-    if col not in ["week_number", "city"]:
+    if col not in ["year", "week_number", "city"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 df = df.round(4)
 
 # =========================
-# Select and order columns
+# Select relevant columns for unpivoting
 # =========================
-cols_order = [
-    "week_number", "city",
-    "pairing_model_1", "pairing_model_1_WoW",
-    "acceptance_model_1", "acceptance_model_1_WoW",
-    "pairing_model_2", "pairing_model_2_WoW",
-    "acceptance_model_2", "acceptance_model_2_WoW",
-    "pairing_model_3", "pairing_model_3_WoW",
-    "acceptance_model_3", "acceptance_model_3_WoW",
-    "pairing_model_4", "pairing_model_4_WoW",
-    "acceptance_model_4", "acceptance_model_4_WoW",
-    "pairing_model_5", "pairing_model_5_WoW",
-    "acceptance_model_5", "acceptance_model_5_WoW"
-]
+base_cols = ["year", "week_number", "city"]
+model_data = df[base_cols + [
+    "pairing_model_1", "pairing_model_1_WoW", "acceptance_model_1", "acceptance_model_1_WoW",
+    "pairing_model_2", "pairing_model_2_WoW", "acceptance_model_2", "acceptance_model_2_WoW",
+    "pairing_model_3", "pairing_model_3_WoW", "acceptance_model_3", "acceptance_model_3_WoW",
+    "pairing_model_4", "pairing_model_4_WoW", "acceptance_model_4", "acceptance_model_4_WoW",
+    "pairing_model_5", "pairing_model_5_WoW", "acceptance_model_5", "acceptance_model_5_WoW"
+]].copy()
 
-df = df[cols_order]
+# =========================
+# Unpivot/Melt the data
+# =========================
+# Create a list to store each model's data
+unpivoted_rows = []
+
+for model_num in [1, 2, 3, 4, 5]:
+    temp_df = model_data[base_cols + [
+        f"pairing_model_{model_num}",
+        f"pairing_model_{model_num}_WoW",
+        f"acceptance_model_{model_num}",
+        f"acceptance_model_{model_num}_WoW"
+    ]].copy()
+
+    temp_df["Model"] = model_num
+    temp_df = temp_df.rename(columns={
+        f"pairing_model_{model_num}": "Pairing Model",
+        f"pairing_model_{model_num}_WoW": "Pairing Model WoW",
+        f"acceptance_model_{model_num}": "Acceptance Model",
+        f"acceptance_model_{model_num}_WoW": "Acceptance Model WoW"
+    })
+
+    unpivoted_rows.append(temp_df)
+
+# Concatenate all models
+unpivoted_df = pd.concat(unpivoted_rows, ignore_index=True)
+
+# Reorder columns
+unpivoted_df = unpivoted_df[[
+    "year", "week_number", "city", "Model",
+    "Pairing Model", "Pairing Model WoW",
+    "Acceptance Model", "Acceptance Model WoW"
+]]
+
+# =========================
+# Sort by year, week_number, city, Model
+# =========================
+unpivoted_df = unpivoted_df.sort_values(
+    ["year", "week_number", "city", "Model"]
+).reset_index(drop=True)
 
 # =========================
 # Export to Excel
 # =========================
-df.to_excel(
+unpivoted_df.to_excel(
     OUTPUT_PATH,
     index=False,
     engine="openpyxl"
@@ -233,3 +269,6 @@ df.to_excel(
 
 print("✅ Pipeline completed successfully.")
 print("📁 Output saved to:", OUTPUT_PATH)
+print(f"📊 Total rows: {len(unpivoted_df)}")
+print(
+    f"📊 Structure: {len(unpivoted_df) // 5} week-city combinations × 5 models")
