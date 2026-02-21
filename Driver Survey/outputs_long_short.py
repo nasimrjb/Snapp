@@ -16,18 +16,17 @@ OUTPUT_SHORT_CSV = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_short_format_
 # =========================
 df = pd.read_excel(RAW_DATA_FILE)
 
-# Ensure city column exists
+if 'recordID' not in df.columns:
+    raise ValueError("recordID column not found.")
+
 if 'city' not in df.columns:
-    raise ValueError("Column 'city' not found in raw database.")
+    raise ValueError("city column not found.")
 
-# Load multiple choice mapping
 multi_choice_df = pd.read_excel(MULTI_CHOICE_FILE)
-
-# Load codebook
 codebook_df = pd.read_excel(CODEBOOK_FILE)
 
 # =========================
-# Identify columns to skip (those with 'customized' answers)
+# Identify customized columns (to exclude)
 # =========================
 customized_cols = codebook_df[
     codebook_df['replaced_answers'].str.contains(
@@ -35,112 +34,69 @@ customized_cols = codebook_df[
 ]['column_name'].tolist()
 
 # =========================
-# Filter multiple choice mapping
+# Get ALL multiple choice columns from mapping file
 # =========================
-multi_choice_df = multi_choice_df[
-    ~multi_choice_df['Column Headers'].isin(customized_cols)
-]
+multi_choice_cols = multi_choice_df['Column Headers'].unique().tolist()
 
-multi_choice_map = multi_choice_df.groupby(
-    'Main Question'
-)['Column Headers'].apply(list).to_dict()
-
-# Get all multi-choice columns (flattened)
+# Keep only those that actually exist in raw data
 multi_choice_cols = [
-    col for cols in multi_choice_map.values()
-    for col in cols if col in df.columns
+    col for col in multi_choice_cols
+    if col in df.columns and col not in customized_cols
 ]
 
 # =========================
-# Process MULTI-CHOICE questions (LONG FORMAT)
+# LONG FORMAT (Unpivot ALL multi-choice columns)
 # =========================
-long_rows = []
+long_df = df[['recordID', 'city'] + multi_choice_cols].copy()
 
-for main_q, cols in multi_choice_map.items():
+long_df = long_df.melt(
+    id_vars=['recordID', 'city'],
+    value_vars=multi_choice_cols,
+    var_name='sub_question',
+    value_name='answer'
+)
 
-    cols = [c for c in cols if c in df.columns]
-    if not cols:
-        continue
+# Remove null answers
+long_df = long_df[long_df['answer'].notna()]
 
-    # Include city in melt base
-    temp = df[['recordID', 'city'] + cols].copy()
+# Optional: keep only valid answers from codebook
+valid_answers = codebook_df[
+    codebook_df['column_name'].isin(multi_choice_cols)
+]['replaced_answers'].dropna().tolist()
 
-    melted = temp.melt(
-        id_vars=['recordID', 'city'],
-        value_vars=cols,
-        var_name='sub_question',
-        value_name='answer'
-    )
-
-    melted = melted[melted['answer'].notna()]
-
-    # Valid answers
-    filtered_answers = codebook_df[
-        codebook_df['column_name'].isin(cols)
-    ]['replaced_answers'].tolist()
-
-    filtered_answers = [ans.split(',,') for ans in filtered_answers]
-    filtered_answers = [
-        item for sublist in filtered_answers for item in sublist
-    ]
-
-    melted = melted[melted['answer'].isin(filtered_answers)]
-
-    melted['main_question'] = main_q
-
-    melted = melted[
-        ['recordID', 'city', 'main_question', 'sub_question', 'answer']
-    ]
-
-    long_rows.append(melted)
-
-# Concatenate long-format
-if long_rows:
-    long_df = pd.concat(long_rows, ignore_index=True)
-else:
-    long_df = pd.DataFrame(
-        columns=['recordID', 'city', 'main_question', 'sub_question', 'answer']
-    )
-
-# =========================
-# Add other demographics (excluding city to avoid duplication)
-# =========================
-demographics_cols = [
-    col for col in df.columns
-    if col not in customized_cols
-    and col not in multi_choice_cols
-    and col not in ['recordID', 'city']
+valid_answers = [
+    ans.strip()
+    for group in valid_answers
+    for ans in group.split(',,')
 ]
 
-if demographics_cols:
-    demo_df = df[['recordID'] + demographics_cols]
-    long_df = long_df.merge(demo_df, on='recordID', how='left')
+long_df = long_df[long_df['answer'].isin(valid_answers)]
 
 # =========================
-# Process SINGLE-ANSWER questions (SHORT FORMAT)
+# Merge back ALL other columns (everything except multi-choice)
 # =========================
-single_answer_cols = [
-    col for col in df.columns
-    if col not in ['recordID']
-    and col not in customized_cols
-    and col not in multi_choice_cols
-]
+other_cols = [col for col in df.columns if col not in multi_choice_cols]
 
-short_df = df[['recordID', 'city'] + [
-    col for col in single_answer_cols if col != 'city'
-]].copy()
+long_df = long_df.merge(
+    df[other_cols],
+    on='recordID',
+    how='left'
+)
+
+# =========================
+# SHORT FORMAT (Everything except multi-choice columns)
+# =========================
+short_cols = [col for col in df.columns if col not in multi_choice_cols]
+
+short_df = df[short_cols].copy()
 
 # =========================
 # Save outputs
 # =========================
 long_df.to_excel(OUTPUT_LONG_FILE, index=False)
-print(f"Long-format multi-choice survey saved to: {OUTPUT_LONG_FILE}")
-
 short_df.to_excel(OUTPUT_SHORT_FILE, index=False)
-print(f"Short-format single-answer survey saved to: {OUTPUT_SHORT_FILE}")
 
 long_df.to_csv(OUTPUT_LONG_CSV, index=False, encoding='utf-8-sig')
-print(f"Long-format multi-choice survey CSV saved to: {OUTPUT_LONG_CSV}")
-
 short_df.to_csv(OUTPUT_SHORT_CSV, index=False, encoding='utf-8-sig')
-print(f"Short-format single-answer survey CSV saved to: {OUTPUT_SHORT_CSV}")
+
+print("Outputs saved successfully.")
