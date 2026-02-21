@@ -15,88 +15,91 @@ OUTPUT_SHORT_CSV = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_short_format_
 # Load data
 # =========================
 df = pd.read_excel(RAW_DATA_FILE)
-
-if 'recordID' not in df.columns:
-    raise ValueError("recordID column not found.")
-
-if 'city' not in df.columns:
-    raise ValueError("city column not found.")
-
 multi_choice_df = pd.read_excel(MULTI_CHOICE_FILE)
 codebook_df = pd.read_excel(CODEBOOK_FILE)
 
-# =========================
-# Identify customized columns (to exclude)
-# =========================
-customized_cols = codebook_df[
-    codebook_df['replaced_answers'].str.contains(
-        'custom', case=False, na=False)
-]['column_name'].tolist()
+for col in ['recordID', 'city']:
+    if col not in df.columns:
+        raise ValueError(f"'{col}' column not found in raw data.")
 
 # =========================
-# Get ALL multiple choice columns from mapping file
+# Identify columns to exclude entirely (marked "customized")
 # =========================
-multi_choice_cols = multi_choice_df['Column Headers'].unique().tolist()
+customized_cols = set(
+    codebook_df.loc[
+        codebook_df['replaced_answers'].str.contains(
+            'customized', case=False, na=False),
+        'column_name'
+    ].tolist()
+)
 
-# Keep only those that actually exist in raw data
+# =========================
+# Identify valid multi-choice columns
+# (exist in raw data, not customized)
+# =========================
 multi_choice_cols = [
-    col for col in multi_choice_cols
+    col for col in multi_choice_df['Column Headers'].unique()
     if col in df.columns and col not in customized_cols
 ]
 
 # =========================
-# LONG FORMAT (Unpivot ALL multi-choice columns)
+# Build valid answers set from codebook
 # =========================
-long_df = df[['recordID', 'city'] + multi_choice_cols].copy()
-
-long_df = long_df.melt(
-    id_vars=['recordID', 'city'],
-    value_vars=multi_choice_cols,
-    var_name='sub_question',
-    value_name='answer'
+valid_answers = set(
+    ans.strip()
+    for group in codebook_df.loc[
+        codebook_df['column_name'].isin(multi_choice_cols),
+        'replaced_answers'
+    ].dropna()
+    for ans in group.split(',,')
 )
 
-# Remove null answers
-long_df = long_df[long_df['answer'].notna()]
-
-# Optional: keep only valid answers from codebook
-valid_answers = codebook_df[
-    codebook_df['column_name'].isin(multi_choice_cols)
-]['replaced_answers'].dropna().tolist()
-
-valid_answers = [
-    ans.strip()
-    for group in valid_answers
-    for ans in group.split(',,')
+# =========================
+# Columns for non-multi-choice outputs
+# (excludes multi-choice and customized columns, but always keeps recordID)
+# =========================
+other_cols = [
+    col for col in df.columns
+    if col not in multi_choice_cols and col not in customized_cols
 ]
 
-long_df = long_df[long_df['answer'].isin(valid_answers)]
+# Ensure recordID is present for merging
+if 'recordID' not in other_cols:
+    other_cols = ['recordID'] + other_cols
 
 # =========================
-# Merge back ALL other columns (everything except multi-choice)
+# LONG FORMAT
+# Melt multi-choice columns, filter valid answers, merge other columns back
 # =========================
-other_cols = [col for col in df.columns if col not in multi_choice_cols]
-
-long_df = long_df.merge(
-    df[other_cols],
-    on='recordID',
-    how='left'
+melted_df = (
+    df[['recordID', 'city'] + multi_choice_cols]
+    .melt(
+        id_vars=['recordID', 'city'],
+        value_vars=multi_choice_cols,
+        var_name='sub_question',
+        value_name='answer'
+    )
+    .dropna(subset=['answer'])
+    .pipe(lambda d: d[d['answer'].isin(valid_answers)])
 )
 
-# =========================
-# SHORT FORMAT (Everything except multi-choice columns)
-# =========================
-short_cols = [col for col in df.columns if col not in multi_choice_cols]
+# Merge other columns; drop 'city' from other_cols before merge to avoid duplication
+other_cols_for_merge = [col for col in other_cols if col != 'city']
+long_df = melted_df.merge(df[other_cols_for_merge], on='recordID', how='left')
 
-short_df = df[short_cols].copy()
+# =========================
+# SHORT FORMAT
+# All columns except multi-choice and customized
+# =========================
+short_df = df[other_cols].copy()
 
 # =========================
 # Save outputs
 # =========================
-long_df.to_excel(OUTPUT_LONG_FILE, index=False)
+long_df.to_excel(OUTPUT_LONG_FILE,  index=False)
 short_df.to_excel(OUTPUT_SHORT_FILE, index=False)
 
-long_df.to_csv(OUTPUT_LONG_CSV, index=False, encoding='utf-8-sig')
+long_df.to_csv(OUTPUT_LONG_CSV,  index=False, encoding='utf-8-sig')
 short_df.to_csv(OUTPUT_SHORT_CSV, index=False, encoding='utf-8-sig')
 
 print("Outputs saved successfully.")
