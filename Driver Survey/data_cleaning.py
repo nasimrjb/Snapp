@@ -4,12 +4,13 @@ import pandas as pd
 # Paths
 # ============================================================
 
-INPUT_RAW_DATA_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\Raw_Data.xlsx"
+INPUT_RAW_DATA_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\Data Raw Driver 2608.xlsx"
 INPUT_COLUMN_RENAME_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\column_rename.xlsx"
 
 OUTPUT_CLEAN_DATA_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\cleaned_survey.xlsx"
 OUTPUT_ERROR_REPORT_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\survey_errors.xlsx"
 OUTPUT_CODEBOOK_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\codebook.xlsx"
+OUTPUT_MISSING_REPORT_PATH = r"D:\OneDrive\Work\Driver Survey\Outputs\unmapped_raw_columns.xlsx"
 
 SHEET_QUESTIONS = "questions"
 SHEET_REPLACED_ANSWERS = "replaced_answers"
@@ -51,25 +52,28 @@ def split_multi_select(value: str):
 
 def smart_numeric_cast(series: pd.Series) -> pd.Series:
     normalized = series.apply(
-        lambda x: normalize_text(x) if isinstance(x, str) else x)
+        lambda x: normalize_text(x) if isinstance(x, str) else x
+    )
     numeric = pd.to_numeric(normalized, errors="coerce")
     non_empty = normalized != ""
     if non_empty.any() and numeric[non_empty].notna().all():
         return numeric
     return series
 
+
 # ============================================================
-# Load data (preserve datetime as-is)
+# Load data
 # ============================================================
 
+raw_df = pd.read_excel(INPUT_RAW_DATA_PATH, dtype=str).fillna("")
 
-raw_df = pd.read_excel(INPUT_RAW_DATA_PATH, dtype=str)
 questions_df = pd.read_excel(
     INPUT_COLUMN_RENAME_PATH,
     sheet_name=SHEET_QUESTIONS,
     header=None,
     dtype=str
 ).fillna("")
+
 replaced_answers_df = pd.read_excel(
     INPUT_COLUMN_RENAME_PATH,
     sheet_name=SHEET_REPLACED_ANSWERS,
@@ -77,44 +81,67 @@ replaced_answers_df = pd.read_excel(
     dtype=str
 ).fillna("")
 
-raw_df = raw_df.fillna("")
-
 error_rows = []
 codebook_rows = []
 
 # ============================================================
-# Header validation
+# Build Mapping (MATCH BY TEXT)
 # ============================================================
+
+expected_headers = questions_df.iloc[0].tolist()
+rename_row = questions_df.iloc[1].tolist()
+
+normalized_expected = {
+    normalize_text(q): idx
+    for idx, q in enumerate(expected_headers)
+    if normalize_text(q)
+}
 
 raw_headers = raw_df.columns.tolist()
-expected_headers = questions_df.iloc[0].tolist()
 
-if len(raw_headers) != len(expected_headers):
-    raise ValueError(
-        "❌ Column count mismatch between raw data and questions sheet")
+normalized_raw = {
+    col: normalize_text(col)
+    for col in raw_headers
+}
 
-for i, (raw_h, exp_h) in enumerate(zip(raw_headers, expected_headers)):
-    if normalize_text(raw_h) != normalize_text(exp_h):
-        error_rows.append({
-            "error_type": "header_mismatch",
-            "column_index": i + 1,
-            "raw_header": raw_h,
-            "expected_header": exp_h
-        })
+# 🚨 Only validate raw columns that do NOT exist in mapping
+unmapped_raw_columns = [
+    col for col, norm in normalized_raw.items()
+    if norm not in normalized_expected
+]
+
+if unmapped_raw_columns:
+    pd.DataFrame({
+        "unmapped_raw_columns": unmapped_raw_columns
+    }).to_excel(OUTPUT_MISSING_REPORT_PATH, index=False)
+
+    print("❌ Raw data contains columns not defined in column_rename.xlsx")
+    print(f"📄 File saved to: {OUTPUT_MISSING_REPORT_PATH}")
+    raise SystemExit
 
 # ============================================================
-# Rename columns
+# Rename Using Mapping
 # ============================================================
 
-raw_df.columns = questions_df.iloc[1].tolist()
+new_column_names = {}
+
+for raw_col in raw_headers:
+    norm = normalized_raw[raw_col]
+    idx = normalized_expected[norm]
+    new_column_names[raw_col] = rename_row[idx]
+
+raw_df = raw_df.rename(columns=new_column_names).copy()
 
 # ============================================================
-# Column processing
+# Process Columns
 # ============================================================
 
-for col_idx, col_name in enumerate(raw_df.columns):
+for raw_original_col in raw_headers:
 
-    # ---------- DATETIME: keep exactly as-is ----------
+    norm = normalized_raw[raw_original_col]
+    col_idx = normalized_expected[norm]
+    col_name = rename_row[col_idx]
+
     if col_name.lower() == "datetime":
         codebook_rows.append({
             "column_name": col_name,
@@ -122,16 +149,14 @@ for col_idx, col_name in enumerate(raw_df.columns):
             "allowed_answers": "datetime",
             "replaced_answers": "datetime"
         })
-        continue  # Skip all further processing for datetime
+        continue
 
     rule = normalize_text(questions_df.iloc[2, col_idx]).lower()
 
-    # ---------- IGNORE ----------
     if col_name.lower().startswith("ignore"):
         raw_df[col_name] = ""
         continue
 
-    # ---------- CUSTOMIZED ANSWERS ----------
     if rule == "customized_answer":
         codebook_rows.append({
             "column_name": col_name,
@@ -141,7 +166,6 @@ for col_idx, col_name in enumerate(raw_df.columns):
         })
         continue
 
-    # ---------- NORMAL QUESTIONS ----------
     allowed_raw = [
         normalize_text(x)
         for x in questions_df.iloc[2:, col_idx]
@@ -160,6 +184,7 @@ for col_idx, col_name in enumerate(raw_df.columns):
 
     for row_idx, raw_val in enumerate(raw_df[col_name]):
         raw_val = normalize_text(raw_val)
+
         if not raw_val:
             cleaned_col.append("")
             continue
@@ -182,13 +207,8 @@ for col_idx, col_name in enumerate(raw_df.columns):
 
         cleaned_col.append(";".join(replaced_parts))
 
-    # Update column values
-    raw_df[col_name] = cleaned_col
+    raw_df[col_name] = smart_numeric_cast(pd.Series(cleaned_col))
 
-    # Numeric conversion (except datetime, already skipped)
-    raw_df[col_name] = smart_numeric_cast(raw_df[col_name])
-
-    # Codebook
     codebook_rows.append({
         "column_name": col_name,
         "question_text": normalize_text(expected_headers[col_idx]),
@@ -197,11 +217,12 @@ for col_idx, col_name in enumerate(raw_df.columns):
     })
 
 # ============================================================
-# Final output
+# Final Output
 # ============================================================
 
-final_df = raw_df[[
-    c for c in raw_df.columns if not c.lower().startswith("ignore")]]
+final_df = raw_df[
+    [c for c in raw_df.columns if not c.lower().startswith("ignore")]
+]
 
 final_df.to_excel(OUTPUT_CLEAN_DATA_PATH, index=False)
 pd.DataFrame(codebook_rows).to_excel(OUTPUT_CODEBOOK_PATH, index=False)
@@ -209,4 +230,4 @@ pd.DataFrame(codebook_rows).to_excel(OUTPUT_CODEBOOK_PATH, index=False)
 if error_rows:
     pd.DataFrame(error_rows).to_excel(OUTPUT_ERROR_REPORT_PATH, index=False)
 
-print("✅ Survey cleaning completed — datetime preserved, numbers numeric, customized answers safe")
+print("✅ Survey cleaning completed — raw columns validated only")
