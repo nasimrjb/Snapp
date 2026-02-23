@@ -67,19 +67,20 @@ def smart_numeric_cast(series: pd.Series) -> pd.Series:
 
 raw_df = pd.read_excel(INPUT_RAW_DATA_PATH, dtype=str).fillna("")
 
+# Data is now in columns instead of rows — transpose after loading
 questions_df = pd.read_excel(
     INPUT_COLUMN_RENAME_PATH,
     sheet_name=SHEET_QUESTIONS,
     header=None,
     dtype=str
-).fillna("")
+).fillna("").T.reset_index(drop=True)
 
 replaced_answers_df = pd.read_excel(
     INPUT_COLUMN_RENAME_PATH,
     sheet_name=SHEET_REPLACED_ANSWERS,
     header=None,
     dtype=str
-).fillna("")
+).fillna("").T.reset_index(drop=True)
 
 error_rows = []
 codebook_rows = []
