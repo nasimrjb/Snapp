@@ -22,12 +22,25 @@ SHEET_REPLACED_ANSWERS = "replaced_answers"
 PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 MULTI_SELECT_DELIMITERS = [";", "؛"]
 
+ZWNJ = "\u200c"
+ZWJ = "\u200d"
+ZWSP = "\u200b"
+BOM = "\ufeff"
+ARABIC_KAF = "\u0643"
+PERSIAN_KAF = "\u06a9"
+ARABIC_YEH = "\u064a"
+PERSIAN_YEH = "\u06cc"
+
 
 def normalize_text(val) -> str:
     if pd.isna(val):
         return ""
     text = str(val).translate(PERSIAN_DIGITS)
     text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    text = text.replace(ZWNJ, "").replace(
+        ZWJ, "").replace(ZWSP, "").replace(BOM, "")
+    text = text.replace(ARABIC_KAF, PERSIAN_KAF).replace(
+        ARABIC_YEH, PERSIAN_YEH)
     return " ".join(text.split()).strip()
 
 
@@ -61,17 +74,46 @@ def smart_numeric_cast(series: pd.Series) -> pd.Series:
     return series
 
 
-def is_checkbox_column(allowed_raw: list, col_name: str) -> bool:
+def build_allowed_raw(questions_df, col_idx, col_name):
     """
-    Detect checkbox-style columns where the survey tool writes the column name
-    (or question label) as the cell value when the box is ticked, and empty
-    when unticked.  We treat a column as a checkbox when:
-      - there are no allowed answers defined at all, OR
-      - the only allowed answer defined is the column name itself.
+    Build a deduplicated, order-preserved list of allowed answers for a column.
+    Strips any entry that equals the column name itself.
     """
-    return len(allowed_raw) == 0 or (
-        len(allowed_raw) == 1 and allowed_raw[0] == col_name
-    )
+    seen = {}
+    for x in questions_df.iloc[2:, col_idx]:
+        norm_x = normalize_text(x)
+        if norm_x and norm_x not in seen and norm_x != col_name:
+            seen[norm_x] = True
+    return list(seen.keys())
+
+
+def is_checkbox_column(
+    allowed_raw: list,
+    col_name: str,
+    original_question: str = "",
+    row2_text: str = "",
+) -> bool:
+    """
+    A column is a checkbox (0/1) when — after stripping the col_name —
+    the remaining allowed answers contain only "echo" values that the survey
+    tool writes automatically:
+      • nothing at all (empty allowed list), OR
+      • the only entry is the full Persian question text (row 0), OR
+      • the only entry is the Persian sub-question fragment (row 2 text),
+        i.e. the text that the survey tool copies into the cell when ticked.
+
+    This covers the common pattern where column_rename.xlsx row 2 holds the
+    Persian answer label rather than being empty, causing is_checkbox_column
+    to incorrectly return False with the old single-condition check.
+    """
+    # Collect all values that are *not* just echoing structural text
+    meaningful = [
+        a for a in allowed_raw
+        if a != col_name
+        and a != original_question
+        and a != row2_text          # <-- KEY FIX: ignore the row-2 echo text
+    ]
+    return len(meaningful) == 0
 
 
 # ============================================================
@@ -80,7 +122,6 @@ def is_checkbox_column(allowed_raw: list, col_name: str) -> bool:
 
 raw_df = pd.read_excel(INPUT_RAW_DATA_PATH, dtype=str).fillna("")
 
-# Data is stored column-wise in the rename file — transpose after loading
 questions_df = pd.read_excel(
     INPUT_COLUMN_RENAME_PATH,
     sheet_name=SHEET_QUESTIONS,
@@ -112,10 +153,8 @@ normalized_expected = {
 }
 
 raw_headers = raw_df.columns.tolist()
-
 normalized_raw = {col: normalize_text(col) for col in raw_headers}
 
-# Only validate raw columns that do NOT exist in mapping
 unmapped_raw_columns = [
     col for col, norm in normalized_raw.items()
     if norm not in normalized_expected
@@ -128,6 +167,17 @@ if unmapped_raw_columns:
     print("❌ Raw data contains columns not defined in column_rename.xlsx")
     print(f"📄 Unmapped columns saved to: {OUTPUT_MISSING_REPORT_PATH}")
     raise SystemExit
+
+# ============================================================
+# Build replaced_answers vlookup index (by normalized question header)
+# ============================================================
+
+replaced_headers = replaced_answers_df.iloc[0].tolist()
+normalized_replaced_headers = {
+    normalize_text(h): idx
+    for idx, h in enumerate(replaced_headers)
+    if normalize_text(h)
+}
 
 # ============================================================
 # Rename Using Mapping
@@ -186,21 +236,36 @@ for raw_original_col in raw_headers:
         continue
 
     # ----------------------------------------------------------
-    # Build allowed answers and replacement map
+    # Build allowed answers: deduplicated + col_name entries stripped
     # ----------------------------------------------------------
-    allowed_raw = [
-        normalize_text(x)
-        for x in questions_df.iloc[2:, col_idx]
-        if normalize_text(x)
-    ]
+    allowed_raw = build_allowed_raw(questions_df, col_idx, col_name)
 
-    replaced_vals = [
-        normalize_text(x)
-        for x in replaced_answers_df.iloc[2:, col_idx]
-        if normalize_text(x)
-    ]
+    # ----------------------------------------------------------
+    # Build replaced_vals via vlookup-style match on question header
+    # ----------------------------------------------------------
+    question_key = normalize_text(expected_headers[col_idx])
+    rep_col_idx = normalized_replaced_headers.get(question_key)
 
-    # Deduplicate to avoid zip misalignment (Bug 2 fix)
+    if rep_col_idx is not None:
+        replaced_vals = [
+            normalize_text(x)
+            for x in replaced_answers_df.iloc[2:, rep_col_idx]
+            if normalize_text(x) and normalize_text(x) != col_name
+        ]
+        # Deduplicate replaced_vals in the same order
+        seen_rep = {}
+        for v in replaced_vals:
+            if v not in seen_rep:
+                seen_rep[v] = True
+        replaced_vals = list(seen_rep.keys())
+    else:
+        replaced_vals = allowed_raw
+        print(
+            f"⚠️  Column '{col_name}' not found in replaced_answers sheet — using raw values.")
+
+    # ----------------------------------------------------------
+    # Build replace_map
+    # ----------------------------------------------------------
     seen = {}
     for raw_ans, rep_ans in zip(allowed_raw, replaced_vals):
         if raw_ans not in seen:
@@ -214,34 +279,36 @@ for raw_original_col in raw_headers:
     replace_map = seen
 
     # ----------------------------------------------------------
-    # Checkbox column detection (Bug 1 fix)
-    # Checkbox columns: the survey tool writes the column name
-    # as the cell value when ticked, and empty when unticked.
-    # We convert ticked → "1" and unticked → "0".
+    # Checkbox column detection
     # ----------------------------------------------------------
-    checkbox_col = is_checkbox_column(allowed_raw, col_name)
+    original_question = normalize_text(expected_headers[col_idx])
+    # row2_text is the Persian sub-question fragment the survey tool echoes
+    # into the cell when a checkbox is ticked — must be excluded from the
+    # "meaningful answers" count when deciding if a column is a checkbox.
+    row2_text = normalize_text(questions_df.iloc[2, col_idx])
+
+    checkbox_col = is_checkbox_column(
+        allowed_raw, col_name, original_question, row2_text
+    )
 
     cleaned_col = []
 
     for row_idx, raw_val in enumerate(raw_df[col_name]):
         raw_val = normalize_text(raw_val)
 
-        # Empty cell
         if not raw_val:
             cleaned_col.append("0" if checkbox_col else "")
             continue
 
-        # --- Checkbox column ---
         if checkbox_col:
-            # Any non-empty value (typically the column name itself) = ticked
             cleaned_col.append("1")
             continue
 
-        # --- Regular single/multi-select column ---
         parts = split_multi_select(raw_val)
         replaced_parts = []
 
         for part in parts:
+            part = normalize_text(part)
             if part not in replace_map:
                 error_rows.append({
                     "error_type": "invalid_answer",
