@@ -1,7 +1,6 @@
 """
-Snapp Driver Survey Cleaner (Stable v3 - Strict MC Logic)
-==========================================================
-
+Snapp Driver Survey Cleaner (Stable v6 - Smart Other + Protected Metadata)
+============================================================================
 python DS_cleaning.py --explore
 python DS_cleaning.py --clean
 python DS_cleaning.py --export
@@ -17,16 +16,14 @@ from collections import defaultdict
 
 import pandas as pd
 
-
 # =============================================================================
 # PATHS
 # =============================================================================
 
 RAW_DIR = r"D:\OneDrive\Work\Driver Survey\raw"
-OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\cleaned3"
+OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\cleaned6"
 
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
-
 
 # =============================================================================
 # FIXED METADATA MAP
@@ -34,22 +31,21 @@ Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
 FIXED_COLUMNS = {
     "شناسه پاسخ": "record_id",
-    "وضعیت پاسخ": "response_status",
     "آدرس آی پی": "ip_address",
     "مهر زمان (mm/dd/yyyy)": "survey_datetime",
     "زمان لازم برای تکمیل (ثانیه)": "completion_seconds",
-    "ثانیه عدد": "completion_seconds_num",
-    "مرجع خارجی": "external_ref",
-    "متغیر سفارشی 1": "custom_var_1",
-    "متغیر سفارشی 2": "custom_var_2",
-    "متغیر سفارشی 3": "custom_var_3",
-    "متغیر سفارشی 4": "custom_var_4",
-    "متغیر سفارشی 5": "custom_var_5",
-    "ایمیل پاسخگو": "respondent_email",
-    "لیست ایمیل": "email_list",
     "کد کشور": "country_code",
     "منطقه": "region",
-    "کپی کردن": "copy_flag",
+}
+
+# These columns must be preserved and treated differently
+PROTECTED_CUSTOM_COLUMNS = {
+    "شناسه پاسخ",
+    "آدرس آی پی",
+    "مهر زمان (mm/dd/yyyy)",
+    "زمان لازم برای تکمیل (ثانیه)",
+    "کد کشور",
+    "منطقه",
 }
 
 DROP_PREFIXES = [
@@ -57,6 +53,12 @@ DROP_PREFIXES = [
     "از وقتی که در اختیار ما قرار دادید",
 ]
 
+# Columns containing these phrases become OTHER type
+OTHER_TRIGGERS = [
+    "اگر پاسخ",
+    "بنویسید",
+    "شرح دهید",
+]
 
 # =============================================================================
 # TEXT NORMALIZATION
@@ -111,17 +113,19 @@ def should_drop(key):
     return any(key.startswith(p) for p in _DROP_PREFIXES_NORM)
 
 
+def is_other_question(text):
+    return any(trigger in text for trigger in OTHER_TRIGGERS)
+
 # =============================================================================
 # MULTI CHOICE SPLITTER (STRICT: ؟ + DASH ONLY)
 # =============================================================================
+
 
 _OPTION_LINE = re.compile(r"[-–—]\s*(.+)")
 
 
 def split_stem_option(col):
-
-    raw = str(col)
-    norm = fa_norm(raw)
+    norm = fa_norm(col)
 
     if "؟" not in norm:
         return norm, None
@@ -130,19 +134,18 @@ def split_stem_option(col):
     stem = norm[: q_index + 1].strip()
 
     remainder = norm[q_index + 1:]
-
     match = _OPTION_LINE.search(remainder)
+
     if match:
         option = match.group(1).strip()
-        if option:
-            return stem, option
+        return stem, option
 
     return stem, None
 
+# =============================================================================
+# DEDUPLICATION
+# =============================================================================
 
-# =============================================================================
-# COLUMN DEDUPLICATION
-# =============================================================================
 
 def deduplicate_columns(cols):
     seen = {}
@@ -156,10 +159,10 @@ def deduplicate_columns(cols):
             new_cols.append(col)
     return new_cols
 
-
 # =============================================================================
 # EXPLORE
 # =============================================================================
+
 
 def explore_data():
     files = sorted(Path(RAW_DIR).glob("*.xls*"))
@@ -172,33 +175,54 @@ def explore_data():
 
     for f in files:
         try:
-            df = pd.read_excel(f, nrows=3)
-            for col in df.columns:
-                key = norm_key(col)
-                stem, option = split_stem_option(col)
+            df = pd.read_excel(f, dtype=str)
 
-                if key not in registry:
-                    registry[key] = {
-                        "stem": stem,
-                        "option": option or "",
+            for col in df.columns:
+                full_q = col
+                key = norm_key(col)
+
+                if full_q not in registry:
+
+                    if col in PROTECTED_CUSTOM_COLUMNS:
+                        q_type = "protected_meta"
+                    elif is_other_question(col):
+                        q_type = "other"
+                    else:
+                        stem, option = split_stem_option(col)
+                        q_type = "multi_choice" if option else "single_choice"
+
+                    registry[full_q] = {
+                        "norm_key": key,
+                        "question_type": q_type,
                         "files": 0,
-                        "fixed": _FIXED_LOOKUP.get(key, ""),
-                        "drop": should_drop(key),
+                        "unique_values": set(),
                     }
-                registry[key]["files"] += 1
+
+                registry[full_q]["files"] += 1
+
+                # track unique only for SINGLE CHOICE
+                if registry[full_q]["question_type"] == "single_choice":
+                    vals = (
+                        df[col]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .loc[lambda s: s != ""]
+                        .unique()
+                    )
+                    registry[full_q]["unique_values"].update(vals)
+
         except Exception:
             print(f"Skipped {f.name}")
 
     rows = []
-    for k, v in registry.items():
+    for q, v in registry.items():
         rows.append({
-            "norm_key": k,
-            "stem": v["stem"],
-            "option": v["option"],
-            "fixed_name": v["fixed"],
-            "drop": v["drop"],
+            "full_question_text": q,
+            "question_type": v["question_type"],
             "appears_in": v["files"],
             "out_of": total,
+            "unique_values": "|".join(sorted(v["unique_values"]))[:5000],
         })
 
     pd.DataFrame(rows).to_csv(
@@ -209,10 +233,10 @@ def explore_data():
 
     print("Column report generated.")
 
-
 # =============================================================================
 # CLEAN
 # =============================================================================
+
 
 def clean_and_merge():
     files = sorted(Path(RAW_DIR).glob("*.xls*"))
@@ -225,6 +249,10 @@ def clean_and_merge():
     for f in files:
         df = pd.read_excel(f, nrows=1)
         for col in df.columns:
+            if col in PROTECTED_CUSTOM_COLUMNS:
+                continue
+            if is_other_question(col):
+                continue
             stem, option = split_stem_option(col)
             if option:
                 all_mc_stems.add(stem)
@@ -238,11 +266,9 @@ def clean_and_merge():
             frames.append(df)
             print(f"Loaded {f.name} ({len(df)} rows)")
         except Exception:
-            print(f"Skipped {f.name}")
             traceback.print_exc()
 
     if not frames:
-        print("No files loaded.")
         return
 
     merged = pd.concat(frames, ignore_index=True, sort=False)
@@ -250,13 +276,6 @@ def clean_and_merge():
 
     merged.to_csv(
         os.path.join(OUTPUT_DIR, "merged_wide.csv"),
-        index=False,
-        encoding="utf-8-sig"
-    )
-
-    long = to_long(merged)
-    long.to_csv(
-        os.path.join(OUTPUT_DIR, "merged_long.csv"),
         index=False,
         encoding="utf-8-sig"
     )
@@ -273,32 +292,26 @@ def clean_file(df, filename, all_mc_stems):
     df.insert(1, "_week_label", Path(filename).stem)
 
     rename_map = {}
-    drop_cols = []
 
     for col in df.columns:
         if col.startswith("_"):
             continue
 
-        base = re.sub(r"__dup\d+$", "", col)
-        key = norm_key(base)
-        stem, option = split_stem_option(base)
-
-        if should_drop(key):
-            drop_cols.append(col)
+        if col in PROTECTED_CUSTOM_COLUMNS:
+            rename_map[col] = _FIXED_LOOKUP.get(norm_key(col), safe_name(col))
             continue
 
-        if key in _FIXED_LOOKUP:
-            rename_map[col] = _FIXED_LOOKUP[key]
+        if is_other_question(col):
+            rename_map[col] = safe_name(col)
             continue
+
+        stem, option = split_stem_option(col)
 
         if option and stem in all_mc_stems:
-            new_name = f"_mc__{safe_name(stem)}__{safe_name(option)}"
-            rename_map[col] = new_name
-            continue
+            rename_map[col] = f"_mc__{safe_name(stem)}__{safe_name(option)}"
+        else:
+            rename_map[col] = safe_name(stem)
 
-        rename_map[col] = safe_name(stem)
-
-    df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df.rename(columns=rename_map, inplace=True)
     df.columns = deduplicate_columns(df.columns)
 
@@ -307,15 +320,6 @@ def clean_file(df, filename, all_mc_stems):
         df[col] = ~(s.isna() | (
             s.astype(str).str.strip().isin(["", "nan", "NaN", "None"])
         ))
-
-    if "survey_datetime" in df.columns:
-        df["survey_datetime"] = pd.to_datetime(
-            df["survey_datetime"],
-            errors="coerce"
-        )
-
-    if "record_id" in df.columns:
-        df.drop_duplicates(subset=["record_id"], inplace=True)
 
     return df
 
@@ -329,106 +333,44 @@ def collapse_multi_choice(df):
             stem = col.split("__")[1]
             groups[stem].append(col)
 
+    if not groups:
+        return df
+
+    # Build all new columns first (avoid fragmentation)
+    new_columns = {}
+
     for stem, cols in groups.items():
-        bool_df = df[cols].fillna(False).astype(bool)
-        df[stem + "_selected"] = bool_df.apply(
+
+        # TRUE if cell has any value (cleaner & no downcast warning)
+        bool_df = df[cols].notna() & (
+            df[cols].astype(str).apply(lambda s: s.str.strip() != "")
+        )
+
+        selected_series = bool_df.apply(
             lambda row: "|".join(
                 [c.split("__")[2] for c, val in zip(cols, row) if val]
             ) or None,
             axis=1
         )
-        df.drop(columns=cols, inplace=True)
+
+        new_columns[stem + "_selected"] = selected_series
+
+    # Drop all MC columns at once
+    all_mc_cols = [c for cols in groups.values() for c in cols]
+    df = df.drop(columns=all_mc_cols)
+
+    # Concatenate once (no fragmentation)
+    df = pd.concat([df, pd.DataFrame(new_columns)], axis=1)
+
+    # Optional but recommended: defragment memory
+    df = df.copy()
 
     return df
-
-
-def to_long(df):
-
-    id_cols = [c for c in [
-        "_source_file",
-        "_week_label",
-        "record_id",
-        "survey_datetime"
-    ] if c in df.columns]
-
-    value_cols = [c for c in df.columns if c not in id_cols]
-
-    long = df.melt(
-        id_vars=id_cols,
-        value_vars=value_cols,
-        var_name="question_key",
-        value_name="answer"
-    )
-
-    long = long[
-        long["answer"].notna() &
-        (long["answer"].astype(str).str.strip() != "")
-    ]
-
-    return long.reset_index(drop=True)
-
-
-# =============================================================================
-# EXPORT DB
-# =============================================================================
-
-def export_db():
-
-    wide_path = os.path.join(OUTPUT_DIR, "merged_wide.csv")
-    if not os.path.exists(wide_path):
-        print("Run --clean first.")
-        return
-
-    df = pd.read_csv(wide_path, low_memory=False)
-
-    meta_cols = [
-        c for c in [
-            "_source_file",
-            "_week_label",
-            "record_id",
-            "survey_datetime",
-            "response_status",
-            "ip_address",
-            "completion_seconds",
-            "respondent_email",
-            "country_code",
-            "region"
-        ] if c in df.columns
-    ]
-
-    q_cols = [c for c in df.columns if c not in meta_cols]
-
-    surveys = df[meta_cols].copy()
-    surveys.insert(0, "survey_id", range(1, len(surveys) + 1))
-    surveys.to_csv(
-        os.path.join(OUTPUT_DIR, "db_surveys.csv"),
-        index=False,
-        encoding="utf-8-sig"
-    )
-
-    df["survey_id"] = surveys["survey_id"].values
-
-    responses = df[["survey_id"] + q_cols].melt(
-        id_vars=["survey_id"],
-        var_name="question_key",
-        value_name="answer"
-    )
-
-    responses = responses[responses["answer"].notna()]
-    responses.insert(0, "response_id", range(1, len(responses) + 1))
-
-    responses.to_csv(
-        os.path.join(OUTPUT_DIR, "db_responses.csv"),
-        index=False,
-        encoding="utf-8-sig"
-    )
-
-    print("DB export complete.")
-
 
 # =============================================================================
 # MAIN
 # =============================================================================
+
 
 if __name__ == "__main__":
 
@@ -438,11 +380,8 @@ if __name__ == "__main__":
         explore_data()
     elif mode == "--clean":
         clean_and_merge()
-    elif mode == "--export":
-        export_db()
     elif mode == "--all":
         explore_data()
         clean_and_merge()
-        export_db()
     else:
-        print("Usage: python DS_cleaning.py --explore | --clean | --export | --all")
+        print("Usage: python DS_cleaning.py --explore | --clean | --all")
