@@ -22,8 +22,9 @@ import pandas as pd
 # PATHS
 # =============================================================================
 
+
 RAW_DIR = r"D:\OneDrive\Work\Driver Survey\raw"
-OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\cleaned2"
+OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\cleaned3"
 
 Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +90,24 @@ def fa_norm(text):
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
+# =============================================================================
+# SAFE NAME / NORMALIZE COLUMN NAME
+# =============================================================================
+
+
+def safe_name(s):
+    """
+    Convert a string to a safe ASCII-compatible column name:
+    - Normalize Persian/Arabic characters
+    - Replace spaces and special chars with underscores
+    - Lowercase
+    """
+    s = fa_norm(s)
+    # keep Persian/Arabic letters and digits
+    s = re.sub(r"[^\w\u0600-\u06ff]", "_", s)
+    s = re.sub(r"_+", "_", s)  # collapse multiple underscores
+    return s.strip("_").lower()
+
 
 def norm_key(col):
     s = fa_norm(col)
@@ -102,25 +121,30 @@ _DROP_PREFIXES_NORM = [norm_key(p) for p in DROP_PREFIXES]
 
 def should_drop(key):
     return any(key.startswith(p) for p in _DROP_PREFIXES_NORM)
+
 # =============================================================================
-# MULTI CHOICE SPLITTER (Persian-aware)
+# MULTI CHOICE SPLITTER (Robust Persian-aware v2)
 # =============================================================================
 
 
-_LAST_DASH = re.compile(r"\s*[-–—]\s*(?=[^-–—]*$)")
+_OPTION_LINE = re.compile(r"^[\s]*[-–—]\s*(.+)", re.MULTILINE)
 
 
 def split_stem_option(col):
     """
-    Logic:
+    Improved logic:
+
     1. If Persian question mark (؟) exists:
          - Stem = everything up to and including ؟
-         - If dash exists after that → treat as option
+         - If ANY dash-option exists after that (even after sentences/newlines)
+           → treat as multiple choice
+
     2. Otherwise fallback to last-dash logic
     """
 
-    col = str(col).split("\n")[0]
-    norm = fa_norm(col)
+    raw = str(col)
+    first_line = raw.split("\n")[0]
+    norm = fa_norm(raw)
 
     # --------------------------------------------------
     # Case 1: Persian question mark exists
@@ -128,20 +152,20 @@ def split_stem_option(col):
     if "؟" in norm:
         q_index = norm.rfind("؟")
         stem = norm[: q_index + 1].strip()
-        remainder = norm[q_index + 1:].strip()
 
-        # If remainder starts with dash → it's multiple choice
-        dash_match = re.match(r"^[-–—]\s*(.+)", remainder)
-        if dash_match:
-            option = dash_match.group(1).strip()
+        remainder = norm[q_index + 1:]
+
+        # Look for dash-option anywhere after question mark
+        match = _OPTION_LINE.search(remainder)
+        if match:
+            option = match.group(1).strip()
             if option and len(option) <= 120:
                 return stem, option
 
-        # If no dash after question mark → not MC
         return stem, None
 
     # --------------------------------------------------
-    # Case 2: Fallback to old logic (last dash)
+    # Case 2: No question mark → fallback to last dash
     # --------------------------------------------------
     m = _LAST_DASH.search(norm)
     if m:
@@ -150,7 +174,7 @@ def split_stem_option(col):
         if option and len(option) <= 120:
             return stem, option
 
-    return norm, None
+    return fa_norm(first_line), None
 # =============================================================================
 # COLUMN DEDUPLICATION
 # =============================================================================
