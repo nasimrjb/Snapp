@@ -1,6 +1,6 @@
 """
-Snapp Driver Survey Cleaner (Stable v2)
-=======================================
+Snapp Driver Survey Cleaner (Stable v3 - Strict MC Logic)
+==========================================================
 
 python DS_cleaning.py --explore
 python DS_cleaning.py --clean
@@ -21,7 +21,6 @@ import pandas as pd
 # =============================================================================
 # PATHS
 # =============================================================================
-
 
 RAW_DIR = r"D:\OneDrive\Work\Driver Survey\raw"
 OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\cleaned3"
@@ -90,22 +89,11 @@ def fa_norm(text):
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-# =============================================================================
-# SAFE NAME / NORMALIZE COLUMN NAME
-# =============================================================================
-
 
 def safe_name(s):
-    """
-    Convert a string to a safe ASCII-compatible column name:
-    - Normalize Persian/Arabic characters
-    - Replace spaces and special chars with underscores
-    - Lowercase
-    """
     s = fa_norm(s)
-    # keep Persian/Arabic letters and digits
     s = re.sub(r"[^\w\u0600-\u06ff]", "_", s)
-    s = re.sub(r"_+", "_", s)  # collapse multiple underscores
+    s = re.sub(r"_+", "_", s)
     return s.strip("_").lower()
 
 
@@ -122,63 +110,39 @@ _DROP_PREFIXES_NORM = [norm_key(p) for p in DROP_PREFIXES]
 def should_drop(key):
     return any(key.startswith(p) for p in _DROP_PREFIXES_NORM)
 
+
 # =============================================================================
-# MULTI CHOICE SPLITTER (Robust Persian-aware v2)
+# MULTI CHOICE SPLITTER (STRICT: ؟ + DASH ONLY)
 # =============================================================================
 
-
-_OPTION_LINE = re.compile(r"^[\s]*[-–—]\s*(.+)", re.MULTILINE)
+_OPTION_LINE = re.compile(r"[-–—]\s*(.+)")
 
 
 def split_stem_option(col):
-    """
-    Improved logic:
-
-    1. If Persian question mark (؟) exists:
-         - Stem = everything up to and including ؟
-         - If ANY dash-option exists after that (even after sentences/newlines)
-           → treat as multiple choice
-
-    2. Otherwise fallback to last-dash logic
-    """
 
     raw = str(col)
-    first_line = raw.split("\n")[0]
     norm = fa_norm(raw)
 
-    # --------------------------------------------------
-    # Case 1: Persian question mark exists
-    # --------------------------------------------------
-    if "؟" in norm:
-        q_index = norm.rfind("؟")
-        stem = norm[: q_index + 1].strip()
+    if "؟" not in norm:
+        return norm, None
 
-        remainder = norm[q_index + 1:]
+    q_index = norm.rfind("؟")
+    stem = norm[: q_index + 1].strip()
 
-        # Look for dash-option anywhere after question mark
-        match = _OPTION_LINE.search(remainder)
-        if match:
-            option = match.group(1).strip()
-            if option and len(option) <= 120:
-                return stem, option
+    remainder = norm[q_index + 1:]
 
-        return stem, None
-
-    # --------------------------------------------------
-    # Case 2: No question mark → fallback to last dash
-    # --------------------------------------------------
-    m = _LAST_DASH.search(norm)
-    if m:
-        stem = norm[:m.start()].strip()
-        option = norm[m.end():].strip()
-        if option and len(option) <= 120:
+    match = _OPTION_LINE.search(remainder)
+    if match:
+        option = match.group(1).strip()
+        if option:
             return stem, option
 
-    return fa_norm(first_line), None
+    return stem, None
+
+
 # =============================================================================
 # COLUMN DEDUPLICATION
 # =============================================================================
-
 
 def deduplicate_columns(cols):
     seen = {}
@@ -212,6 +176,7 @@ def explore_data():
             for col in df.columns:
                 key = norm_key(col)
                 stem, option = split_stem_option(col)
+
                 if key not in registry:
                     registry[key] = {
                         "stem": stem,
@@ -257,7 +222,6 @@ def clean_and_merge():
 
     all_mc_stems = set()
 
-    # Pass 1 – collect stems
     for f in files:
         df = pd.read_excel(f, nrows=1)
         for col in df.columns:
@@ -310,7 +274,6 @@ def clean_file(df, filename, all_mc_stems):
 
     rename_map = {}
     drop_cols = []
-    mc_cols = []
 
     for col in df.columns:
         if col.startswith("_"):
@@ -331,17 +294,14 @@ def clean_file(df, filename, all_mc_stems):
         if option and stem in all_mc_stems:
             new_name = f"_mc__{safe_name(stem)}__{safe_name(option)}"
             rename_map[col] = new_name
-            mc_cols.append(col)
             continue
 
         rename_map[col] = safe_name(stem)
 
     df.drop(columns=drop_cols, inplace=True, errors="ignore")
     df.rename(columns=rename_map, inplace=True)
-
     df.columns = deduplicate_columns(df.columns)
 
-    # Encode multi choice
     for col in [c for c in df.columns if c.startswith("_mc__")]:
         s = df[col]
         df[col] = ~(s.isna() | (
