@@ -102,36 +102,59 @@ _DROP_PREFIXES_NORM = [norm_key(p) for p in DROP_PREFIXES]
 
 def should_drop(key):
     return any(key.startswith(p) for p in _DROP_PREFIXES_NORM)
-
-
 # =============================================================================
-# MULTI CHOICE SPLITTER
+# MULTI CHOICE SPLITTER (Persian-aware)
 # =============================================================================
+
 
 _LAST_DASH = re.compile(r"\s*[-–—]\s*(?=[^-–—]*$)")
 
 
 def split_stem_option(col):
+    """
+    Logic:
+    1. If Persian question mark (؟) exists:
+         - Stem = everything up to and including ؟
+         - If dash exists after that → treat as option
+    2. Otherwise fallback to last-dash logic
+    """
+
     col = str(col).split("\n")[0]
     norm = fa_norm(col)
+
+    # --------------------------------------------------
+    # Case 1: Persian question mark exists
+    # --------------------------------------------------
+    if "؟" in norm:
+        q_index = norm.rfind("؟")
+        stem = norm[: q_index + 1].strip()
+        remainder = norm[q_index + 1:].strip()
+
+        # If remainder starts with dash → it's multiple choice
+        dash_match = re.match(r"^[-–—]\s*(.+)", remainder)
+        if dash_match:
+            option = dash_match.group(1).strip()
+            if option and len(option) <= 120:
+                return stem, option
+
+        # If no dash after question mark → not MC
+        return stem, None
+
+    # --------------------------------------------------
+    # Case 2: Fallback to old logic (last dash)
+    # --------------------------------------------------
     m = _LAST_DASH.search(norm)
     if m:
         stem = norm[:m.start()].strip()
         option = norm[m.end():].strip()
         if option and len(option) <= 120:
             return stem, option
+
     return norm, None
-
-
-def safe_name(text, maxlen=60):
-    s = re.sub(r"[^\w\u0600-\u06ff\s]", " ", str(text))
-    s = re.sub(r"\s+", "_", s).strip("_")
-    return s[:maxlen]
-
-
 # =============================================================================
 # COLUMN DEDUPLICATION
 # =============================================================================
+
 
 def deduplicate_columns(cols):
     seen = {}
