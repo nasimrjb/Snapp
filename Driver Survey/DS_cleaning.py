@@ -1,564 +1,473 @@
 """
-Snapp Driver Survey Cleaner (Stable v7 - with English Translation)
-===================================================================
-Adds two new outputs on top of v6:
-  - column_report_translated.csv  : column_report with english_column_name + unique_values_english
-  - merged_wide_translated.csv    : merged_wide with English column names and cell values
+Driver Survey Data Processing Pipeline
+=======================================
+Reads raw weekly survey Excel files, validates columns against a JSON mapping,
+renames headers, recodes answers, and produces:
+  - short_survey.csv  → meta + single-choice questions
+  - wide_survey.csv   → meta + multi-choice questions (binary 0/1 columns)
+  - long_survey.csv   → meta + multi-choice questions (melted/stacked rows)
+
+If unmapped columns are found, outputs unmapped_columns.csv and exits early.
+If unmapped answers are found in single/multi questions, outputs
+unmapped_answers.csv and exits early.
+
+Column exclusion rules:
+  - "customized_answer": "customized_answer" → excluded from all outputs.
+  - type == "other" → excluded from all outputs (free-text "other" fields).
+
+A computed "weeknumber" column is added based on the datetime column:
+  If weekday is Saturday (dayofweek==5), weeknumber = ISO week + 1,
+  else weeknumber = ISO week.
 
 Usage:
-    python DS_cleaning.py --explore          # column_report.csv only
-    python DS_cleaning.py --clean            # merged_wide.csv only
-    python DS_cleaning.py --translate        # translated versions of both (requires above outputs)
-    python DS_cleaning.py --export           # (reserved)
-    python DS_cleaning.py --all              # explore + clean + translate
+    python process_surveys.py
 """
 
 import os
-import re
 import sys
-import traceback
-from pathlib import Path
+import json
+import glob
+import re
+import unicodedata
+import pandas as pd
 from collections import defaultdict
 
-import pandas as pd
-
-# =============================================================================
-# PATHS
-# =============================================================================
-
+# ============================================================
+# CONFIGURATION
+# ============================================================
 RAW_DIR = r"D:\OneDrive\Work\Driver Survey\raw"
-OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\cleaned7"
-# <-- path to your mapping xlsx
-MAPPING_FILE = r"D:\OneDrive\Work\Driver Survey\DataSources\column_rename.xlsx"
-
-Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
-
-# =============================================================================
-# FIXED METADATA MAP
-# =============================================================================
-
-FIXED_COLUMNS = {
-    "شناسه پاسخ":                   "record_id",
-    "آدرس آی پی":                   "ip_address",
-    "مهر زمان (mm/dd/yyyy)":        "survey_datetime",
-    "زمان لازم برای تکمیل (ثانیه)": "completion_seconds",
-    "کد کشور":                       "country_code",
-    "منطقه":                         "region",
-}
-
-PROTECTED_CUSTOM_COLUMNS = {
-    "شناسه پاسخ",
-    "آدرس آی پی",
-    "مهر زمان (mm/dd/yyyy)",
-    "زمان لازم برای تکمیل (ثانیه)",
-    "کد کشور",
-    "منطقه",
-}
-
-DROP_PREFIXES = [
-    "کاربر گرامی سلام",
-    "از وقتی که در اختیار ما قرار دادید",
-]
-
-OTHER_TRIGGERS = [
-    "اگر پاسخ",
-    "بنویسید",
-    "شرح دهید",
-]
-
-# =============================================================================
-# TEXT NORMALIZATION
-# =============================================================================
-
-_AR_TO_FA = str.maketrans({
-    "\u0643": "\u06a9",
-    "\u064a": "\u06cc",
-    "\u0629": "\u0647",
-    "\u0624": "\u0648",
-    "\u0625": "\u0627",
-    "\u0623": "\u0627",
-    "\u0671": "\u0627",
-    "\u200c": " ",
-    "\u200b": "",
-    "\u200f": "",
-    "\u200e": "",
-    "\ufeff": "",
-})
-
-_DIACRITICS = re.compile(
-    r"[\u064b-\u065f\u0610-\u061a\u06d6-\u06dc\u06df-\u06e4\u06e7\u06e8\u06ea-\u06ed]"
-)
+MAPPING_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\column_rename_mapping.json"
+OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\processed"
 
 
-def fa_norm(text: str) -> str:
-    text = str(text).translate(_AR_TO_FA)
-    text = _DIACRITICS.sub("", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+# ============================================================
+# Helpers
+# ============================================================
+
+def normalize(text):
+    if not isinstance(text, str):
+        return str(text)
+    return unicodedata.normalize("NFKC", text).strip()
 
 
-def safe_name(s: str) -> str:
-    s = fa_norm(s)
-    s = re.sub(r"[^\w\u0600-\u06ff]", "_", s)
-    s = re.sub(r"_+", "_", s)
-    return s.strip("_").lower()
+# Digit translators: Persian ۰-۹ and Arabic ٠-٩ → ASCII 0-9
+_PERSIAN_TO_ASCII = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+_ARABIC_TO_ASCII = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
 
-def norm_key(col: str) -> str:
-    s = fa_norm(col)
-    s = re.sub(r"[^\w\u0600-\u06ff\s]", " ", s)
-    return re.sub(r"\s+", " ", s).strip().lower()
-
-
-_FIXED_LOOKUP = {norm_key(k): v for k, v in FIXED_COLUMNS.items()}
-_DROP_PREFIXES_NORM = [norm_key(p) for p in DROP_PREFIXES]
-
-
-def should_drop(key: str) -> bool:
-    return any(key.startswith(p) for p in _DROP_PREFIXES_NORM)
-
-
-def is_other_question(text: str) -> bool:
-    return any(trigger in text for trigger in OTHER_TRIGGERS)
-
-
-# =============================================================================
-# MULTI-CHOICE SPLITTER  (strict: ؟ + dash only)
-# =============================================================================
-
-_OPTION_LINE = re.compile(r"[-–—]\s*(.+)")
-
-
-def split_stem_option(col: str):
-    norm = fa_norm(col)
-    if "؟" not in norm:
-        return norm, None
-    q_index = norm.rfind("؟")
-    stem = norm[: q_index + 1].strip()
-    remainder = norm[q_index + 1:]
-    match = _OPTION_LINE.search(remainder)
-    if match:
-        return stem, match.group(1).strip()
-    return stem, None
-
-
-# =============================================================================
-# DEDUPLICATION
-# =============================================================================
-
-
-def deduplicate_columns(cols):
-    seen = {}
-    new_cols = []
-    for col in cols:
-        if col in seen:
-            seen[col] += 1
-            new_cols.append(f"{col}__dup{seen[col]}")
-        else:
-            seen[col] = 0
-            new_cols.append(col)
-    return new_cols
-
-
-# =============================================================================
-# EXPLORE
-# =============================================================================
-
-
-def explore_data():
-    files = sorted(Path(RAW_DIR).glob("*.xls*"))
-    if not files:
-        print("No Excel files found.")
-        return
-
-    registry = {}
-    total = len(files)
-
-    for f in files:
-        try:
-            df = pd.read_excel(f, dtype=str)
-
-            for col in df.columns:
-                full_q = col
-                key = norm_key(col)
-
-                if full_q not in registry:
-                    if col in PROTECTED_CUSTOM_COLUMNS:
-                        q_type = "protected_meta"
-                    elif is_other_question(col):
-                        q_type = "other"
-                    else:
-                        stem, option = split_stem_option(col)
-                        q_type = "multi_choice" if option else "single_choice"
-
-                    registry[full_q] = {
-                        "norm_key":     key,
-                        "question_type": q_type,
-                        "files":         0,
-                        "unique_values": set(),
-                    }
-
-                registry[full_q]["files"] += 1
-
-                if registry[full_q]["question_type"] == "single_choice":
-                    vals = (
-                        df[col]
-                        .dropna()
-                        .astype(str)
-                        .str.strip()
-                        .loc[lambda s: s != ""]
-                        .unique()
-                    )
-                    registry[full_q]["unique_values"].update(vals)
-
-        except Exception:
-            print(f"Skipped {f.name}")
-
-    rows = []
-    for q, v in registry.items():
-        rows.append({
-            "full_question_text": q,
-            "question_type":      v["question_type"],
-            "appears_in":         v["files"],
-            "out_of":             total,
-            "unique_values":      "|".join(sorted(v["unique_values"]))[:5000],
-        })
-
-    pd.DataFrame(rows).to_csv(
-        os.path.join(OUTPUT_DIR, "column_report.csv"),
-        index=False,
-        encoding="utf-8-sig",
+def fuzzy_normalize(text):
+    """
+    Aggressive normalization for answer comparison.
+    Handles: NFKC, Persian/Arabic digits → ASCII, zero-width chars (ZWNJ etc.)
+    replaced with space, diacritics stripped, punctuation removed, whitespace
+    collapsed, lowercased.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    text = unicodedata.normalize("NFKC", text)
+    # Persian / Arabic digits → ASCII
+    text = text.translate(_PERSIAN_TO_ASCII)
+    text = text.translate(_ARABIC_TO_ASCII)
+    # Replace zero-width / formatting chars (Cf) and diacritics (Mn) with space
+    text = "".join(
+        c if unicodedata.category(c) not in ("Cf", "Mn") else " "
+        for c in text
     )
-    print("column_report.csv generated.")
+    # Remove punctuation and symbols (keep letters, digits, spaces)
+    text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.lower()
 
 
-# =============================================================================
-# CLEAN
-# =============================================================================
+def load_mapping(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def clean_and_merge():
-    files = sorted(Path(RAW_DIR).glob("*.xls*"))
+def is_customized_answer(meta):
+    """Return True if this mapping entry has customized_answer set."""
+    answers = meta.get("answers")
+    if isinstance(answers, dict):
+        return (answers.get("customized_answer") == "customized_answer")
+    return False
+
+
+def build_raw_to_key(mapping):
+    raw_to_key = {}
+    for key, meta in mapping.items():
+        for raw_header in meta.get("raw", []):
+            raw_to_key[normalize(raw_header)] = key
+    return raw_to_key
+
+
+def compute_weeknumber(dt_series):
+    """
+    Compute week number from a datetime series.
+    Replicates the Excel formula:
+        IF(WEEKDAY(date)=7, WEEKNUM(date)+1, WEEKNUM(date))
+
+    Excel WEEKDAY (type 1): Sunday=1, Monday=2, ... Saturday=7
+    Excel WEEKNUM (type 1): Week containing Jan 1 is week 1, weeks start Sunday.
+
+    pandas dayofweek: Monday=0 ... Sunday=6  →  Saturday=5
+    """
+    dt = pd.to_datetime(dt_series, errors="coerce")
+
+    # Day of year (1-based)
+    doy = dt.dt.dayofyear
+
+    # What weekday is Jan 1 of each year? (Sunday=0 basis)
+    jan1 = pd.to_datetime(dt.dt.year.astype(str) + "-01-01", errors="coerce")
+    # pandas dayofweek: Mon=0..Sun=6 → convert to Sun=0..Sat=6
+    jan1_wday_sun = (jan1.dt.dayofweek + 1) % 7
+
+    # Excel WEEKNUM (type 1, Sunday start): week containing Jan 1 is week 1
+    weeknum = (doy + jan1_wday_sun - 1) // 7 + 1
+
+    # Saturday (dayofweek=5) or Sunday (dayofweek=6) → week + 1
+    is_weekend = dt.dt.dayofweek.isin([5, 6])
+
+    weeknumber = weeknum.where(~is_weekend, weeknum + 1)
+
+    return weeknumber.astype("Int64")
+
+
+def load_all_raw_files(raw_dir):
+    patterns = ["*.xlsx", "*.xls", "*.csv"]
+    files = []
+    for pat in patterns:
+        files.extend(glob.glob(os.path.join(raw_dir, pat)))
+    files = sorted(set(files))
+
     if not files:
-        print("No Excel files found.")
-        return
+        print(f"ERROR: No data files found in {raw_dir}")
+        sys.exit(1)
 
-    all_mc_stems = set()
-    for f in files:
-        df = pd.read_excel(f, nrows=1)
-        for col in df.columns:
-            if col in PROTECTED_CUSTOM_COLUMNS:
-                continue
-            if is_other_question(col):
-                continue
-            stem, option = split_stem_option(col)
-            if option:
-                all_mc_stems.add(stem)
+    print(f"Found {len(files)} raw file(s)")
 
     frames = []
-    for f in files:
-        try:
-            df = pd.read_excel(f, dtype=str)
-            df = clean_file(df, f.name, all_mc_stems)
-            frames.append(df)
-            print(f"Loaded {f.name} ({len(df)} rows)")
-        except Exception:
-            traceback.print_exc()
+    col_unique_vals = defaultdict(set)
+    col_file_count = defaultdict(int)
 
-    if not frames:
-        return
+    for fpath in files:
+        fname = os.path.basename(fpath)
+        print(f"  Reading: {fname}")
 
-    merged = pd.concat(frames, ignore_index=True, sort=False)
-    merged = collapse_multi_choice(merged)
-
-    merged.to_csv(
-        os.path.join(OUTPUT_DIR, "merged_wide.csv"),
-        index=False,
-        encoding="utf-8-sig",
-    )
-    print("merged_wide.csv generated.")
-
-
-def clean_file(df, filename, all_mc_stems):
-    df = df.copy()
-    df.columns = deduplicate_columns(df.columns)
-
-    df.insert(0, "_source_file", filename)
-    df.insert(1, "_week_label", Path(filename).stem)
-
-    rename_map = {}
-    for col in df.columns:
-        if col.startswith("_"):
-            continue
-        if col in PROTECTED_CUSTOM_COLUMNS:
-            rename_map[col] = _FIXED_LOOKUP.get(norm_key(col), safe_name(col))
-            continue
-        if is_other_question(col):
-            rename_map[col] = safe_name(col)
-            continue
-        stem, option = split_stem_option(col)
-        if option and stem in all_mc_stems:
-            rename_map[col] = f"_mc__{safe_name(stem)}__{safe_name(option)}"
+        if fpath.endswith(".csv"):
+            df = pd.read_csv(fpath, dtype=str)
         else:
-            rename_map[col] = safe_name(stem)
+            df = pd.read_excel(fpath, dtype=str)
 
-    df.rename(columns=rename_map, inplace=True)
-    df.columns = deduplicate_columns(df.columns)
+        norm_cols = [normalize(c) for c in df.columns]
+        df.columns = norm_cols
+        df["_source_file"] = fname
 
-    for col in [c for c in df.columns if c.startswith("_mc__")]:
-        s = df[col]
-        df[col] = ~(s.isna() | (
-            s.astype(str).str.strip().isin(["", "nan", "NaN", "None"])))
+        for col in norm_cols:
+            col_file_count[col] += 1
+            col_unique_vals[col].update(df[col].dropna().unique())
 
-    return df
+        frames.append(df)
 
+    combined = pd.concat(frames, ignore_index=True)
+    print(f"Total rows: {len(combined)}")
 
-def collapse_multi_choice(df):
-    groups = defaultdict(list)
-    for col in df.columns:
-        if col.startswith("_mc__"):
-            stem = col.split("__")[1]
-            groups[stem].append(col)
-
-    if not groups:
-        return df
-
-    new_columns = {}
-    for stem, cols in groups.items():
-        bool_df = df[cols].notna() & (
-            df[cols].astype(str).apply(lambda s: s.str.strip() != "")
-        )
-        selected_series = bool_df.apply(
-            lambda row: "|".join(
-                [c.split("__")[2] for c, val in zip(cols, row) if val]
-            ) or None,
-            axis=1,
-        )
-        new_columns[stem + "_selected"] = selected_series
-
-    all_mc_cols = [c for cols in groups.values() for c in cols]
-    df = df.drop(columns=all_mc_cols)
-    df = pd.concat([df, pd.DataFrame(new_columns)], axis=1)
-    return df.copy()
+    return combined, col_unique_vals, col_file_count
 
 
-# =============================================================================
-# TRANSLATION HELPERS  (new in v7)
-# =============================================================================
+# ============================================================
+# Validation
+# ============================================================
 
-
-def _load_mapping(mapping_file: str):
+def find_unmapped_answers(col_unique_vals, mapping, raw_to_key):
     """
-    Load column_rename.xlsx and return:
-        q_rename      : {Persian full question text -> English column name}
-        answer_maps   : {English column name -> {Persian answer -> English answer}}
-        safe_to_eng   : {safe_name(Persian question) -> English column name}
-        flat_answer_map: {fa_norm(Persian answer) -> English answer}  (cross-question fallback)
+    For single and multi-choice questions, check that every unique raw
+    answer found in the data has a corresponding entry in the mapping's
+    answers dict.  Returns a list of dicts describing each mismatch.
     """
-    qs = pd.read_excel(
-        mapping_file, sheet_name="questions",         header=None)
-    ra = pd.read_excel(
-        mapping_file, sheet_name="replaced_answers",  header=None)
+    unmapped = []
 
-    # ── question rename map ──────────────────────────────────────────────────
-    q_rename = {}
-    for i, row in qs.iterrows():
-        persian_q = str(row[0]).strip() if pd.notna(row[0]) else ""
-        eng_name = str(row[1]).strip() if pd.notna(row[1]) else ""
-        if persian_q and eng_name:
-            q_rename[persian_q] = eng_name
-
-    # ── per-question answer maps ─────────────────────────────────────────────
-    answer_maps = {}
-    for i, row_q in qs.iterrows():
-        persian_q = str(row_q[0]).strip() if pd.notna(row_q[0]) else ""
-        eng_name = str(row_q[1]).strip() if pd.notna(row_q[1]) else ""
-        if not eng_name or not persian_q or i >= len(ra):
+    for norm_col, unique_vals in col_unique_vals.items():
+        if norm_col not in raw_to_key:
             continue
-        row_r = ra.iloc[i]
-        persian_ans = [str(v).strip() for v in row_q[2:] if pd.notna(v)]
-        english_ans = [str(v).strip() for v in row_r[2:] if pd.notna(v)]
-        if persian_ans and english_ans and len(persian_ans) == len(english_ans):
-            answer_maps[eng_name] = dict(zip(persian_ans, english_ans))
-
-    # ── derived lookups ──────────────────────────────────────────────────────
-    safe_to_eng = {safe_name(pk): ev for pk, ev in q_rename.items()}
-    q_rename_norm = {fa_norm(pk): ev for pk, ev in q_rename.items()}
-
-    flat_answer_map = {}
-    for amap in answer_maps.values():
-        for persian_a, english_a in amap.items():
-            norm = fa_norm(persian_a)
-            if norm not in flat_answer_map:
-                flat_answer_map[norm] = english_a
-
-    return q_rename_norm, answer_maps, safe_to_eng, flat_answer_map
-
-
-def _map_question(full_q: str, q_rename_norm: dict, safe_to_eng: dict):
-    norm = fa_norm(full_q)
-    if norm in q_rename_norm:
-        return q_rename_norm[norm]
-    sn = safe_name(full_q)
-    return safe_to_eng.get(sn)
-
-
-def _translate_unique_values(eng_col, uv_str, answer_maps: dict, flat_answer_map: dict):
-    if not isinstance(uv_str, str) or not uv_str.strip():
-        return uv_str
-    amap = answer_maps.get(eng_col, {}) if eng_col else {}
-    result = []
-    for v in uv_str.split("|"):
-        v = v.strip()
-        if v in amap:
-            result.append(amap[v])
-        else:
-            norm = fa_norm(v)
-            result.append(flat_answer_map.get(norm, v))
-    return "|".join(result)
-
-
-def _translate_cell(val, col: str, answer_maps: dict, safe_to_eng: dict, flat_answer_map: dict):
-    """Translate a single cell value to English."""
-    if not isinstance(val, str):
-        return val
-    v = val.strip()
-    if not v or v in ("nan", "None", "True", "False"):
-        return val
-
-    # Col-specific answer map
-    amap = answer_maps.get(col, {})
-    if v in amap:
-        return amap[v]
-    norm_v = fa_norm(v)
-    for pk, ev in amap.items():
-        if fa_norm(pk) == norm_v:
-            return ev
-
-    # Pipe-separated MC selected values
-    if "|" in v:
-        parts = []
-        for p in v.split("|"):
-            p = p.strip()
-            if p in safe_to_eng:
-                parts.append(safe_to_eng[p])
-            else:
-                parts.append(flat_answer_map.get(fa_norm(p), p))
-        return "|".join(parts)
-
-    # Cross-question flat fallback
-    return flat_answer_map.get(norm_v, val)
-
-
-# =============================================================================
-# TRANSLATE
-# =============================================================================
-
-_SKIP_TRANSLATE_COLS = {
-    "_source_file", "_week_label", "record_id",
-    "ip_address", "survey_datetime", "completion_seconds",
-}
-
-
-def translate_outputs():
-    if not Path(MAPPING_FILE).exists():
-        print(f"Mapping file not found: {MAPPING_FILE}")
-        return
-
-    cr_path = os.path.join(OUTPUT_DIR, "column_report.csv")
-    mw_path = os.path.join(OUTPUT_DIR, "merged_wide.csv")
-
-    if not Path(cr_path).exists():
-        print("column_report.csv not found — run --explore first.")
-        return
-    if not Path(mw_path).exists():
-        print("merged_wide.csv not found — run --clean first.")
-        return
-
-    print("Loading mapping file...")
-    q_rename_norm, answer_maps, safe_to_eng, flat_answer_map = _load_mapping(
-        MAPPING_FILE)
-
-    # ── Translate column_report.csv ──────────────────────────────────────────
-    cr = pd.read_csv(cr_path)
-
-    cr["english_column_name"] = cr["full_question_text"].apply(
-        lambda q: _map_question(q, q_rename_norm, safe_to_eng)
-    )
-    cr["unique_values_english"] = cr.apply(
-        lambda r: _translate_unique_values(
-            r["english_column_name"], r["unique_values"], answer_maps, flat_answer_map
-        ),
-        axis=1,
-    )
-
-    cr_out = cr[[
-        "full_question_text", "english_column_name", "question_type",
-        "appears_in", "out_of", "unique_values", "unique_values_english",
-    ]]
-    cr_out_path = os.path.join(OUTPUT_DIR, "column_report_translated.csv")
-    cr_out.to_csv(cr_out_path, index=False, encoding="utf-8-sig")
-    mapped = cr_out["english_column_name"].notna().sum()
-    print(
-        f"column_report_translated.csv written  ({mapped}/{len(cr_out)} questions mapped)")
-
-    # ── Translate merged_wide.csv ────────────────────────────────────────────
-    mw = pd.read_csv(mw_path, dtype=str)
-
-    # Rename columns
-    col_rename_mw = {}
-    for col in mw.columns:
-        if col.startswith("_") or col in _SKIP_TRANSLATE_COLS:
+        key = raw_to_key[norm_col]
+        meta = mapping.get(key)
+        if not meta:
             continue
-        if col in safe_to_eng:
-            col_rename_mw[col] = safe_to_eng[col]
-        elif col.endswith("_selected"):
-            base = col[:-9]  # strip "_selected"
-            if base in safe_to_eng:
-                col_rename_mw[col] = safe_to_eng[base] + "_selected"
 
-    mw = mw.rename(columns=col_rename_mw)
-    print(f"  Columns renamed: {len(col_rename_mw)}")
-
-    remaining_persian = [
-        c for c in mw.columns
-        if any("\u0600" <= ch <= "\u06ff" for ch in c)
-    ]
-    if remaining_persian:
-        print(
-            f"  Columns without mapping ({len(remaining_persian)}): {remaining_persian[:5]}")
-
-    # Translate cell values
-    for col in mw.columns:
-        if col in _SKIP_TRANSLATE_COLS or col.startswith("_"):
+        qtype = meta.get("type")
+        if qtype not in ("single", "multi"):
             continue
-        mw[col] = mw[col].apply(
-            lambda v: _translate_cell(
-                v, col, answer_maps, safe_to_eng, flat_answer_map)
+
+        # Skip columns that would be excluded during processing
+        if is_customized_answer(meta):
+            continue
+        if meta.get("type") == "other":
+            continue
+
+        answers = meta.get("answers")
+        if not answers:
+            continue
+
+        # Fuzzy-normalize the expected answer keys for comparison
+        fuzzy_expected = {fuzzy_normalize(k) for k in answers.keys()}
+
+        for raw_val in sorted(unique_vals):
+            if fuzzy_normalize(raw_val) not in fuzzy_expected:
+                unmapped.append({
+                    "mapping_key": key,
+                    "question_type": qtype,
+                    "long_name": meta.get("long", ""),
+                    "unmapped_raw_answer": raw_val,
+                })
+
+    return unmapped
+
+
+def find_unmapped_columns(col_unique_vals, col_file_count, raw_to_key):
+    unmapped = []
+
+    for col in sorted(col_unique_vals.keys()):
+        if col == "_source_file":
+            continue
+        if col not in raw_to_key:
+            answers = col_unique_vals[col]
+            unmapped.append({
+                "raw_column_header": col,
+                "unique_answers_sample": " | ".join(sorted(answers)[:30]),
+                "num_unique_answers": len(answers),
+                "num_files_appeared": col_file_count[col],
+            })
+
+    return unmapped
+
+
+# ============================================================
+# Processing
+# ============================================================
+
+def process_data(combined, mapping, raw_to_key):
+
+    # Build set of keys to skip:
+    #   - customized_answer columns
+    #   - "other" type columns
+    skip_keys = set()
+    for key, meta in mapping.items():
+        if is_customized_answer(meta):
+            skip_keys.add(key)
+        if meta.get("type") == "other":
+            skip_keys.add(key)
+
+    if skip_keys:
+        print(f"\nSkipping {len(skip_keys)} column(s) "
+              f"(customized_answer + other type)")
+
+    # Identify present mapping keys, excluding skipped ones
+    present_keys = {}
+    for col in combined.columns:
+        if col in raw_to_key:
+            key = raw_to_key[col]
+            if key not in skip_keys:
+                present_keys[key] = col
+
+    # Classify by type
+    meta_keys = []
+    single_keys = []
+    multi_keys = []
+
+    for key, col in present_keys.items():
+        qtype = mapping[key]["type"]
+        if qtype == "meta":
+            if not key.startswith("ignore"):
+                meta_keys.append(key)
+        elif qtype == "single":
+            single_keys.append(key)
+        elif qtype == "multi":
+            multi_keys.append(key)
+
+    print("\nColumn classification (after exclusions):")
+    print(f"  meta:   {len(meta_keys)}")
+    print(f"  single: {len(single_keys)}")
+    print(f"  multi:  {len(multi_keys)}")
+    print(f"  other:  (excluded)")
+
+    # ============================================================
+    # BUILD META COLUMNS (shared across all outputs)
+    # ============================================================
+
+    meta_dict = {}
+    for key in meta_keys:
+        meta_dict[key] = combined[present_keys[key]].copy()
+    meta_dict["_source_file"] = combined["_source_file"]
+
+    # Add computed weeknumber from datetime
+    if "datetime" in meta_dict:
+        meta_dict["weeknumber"] = compute_weeknumber(meta_dict["datetime"])
+    else:
+        print("WARNING: 'datetime' column not found — weeknumber not computed")
+
+    meta_df = pd.DataFrame(meta_dict)
+
+    # ============================================================
+    # SHORT SURVEY → meta + single-choice (recoded)
+    # ============================================================
+
+    single_dict = {}
+    for key in single_keys:
+        col = combined[present_keys[key]].copy()
+        answers = mapping[key].get("answers")
+
+        if answers:
+            fuzzy_answers = {fuzzy_normalize(k): v for k, v in answers.items()}
+            col = col.map(lambda x: fuzzy_answers.get(
+                fuzzy_normalize(x), x) if pd.notna(x) else x)
+
+        single_dict[key] = col
+
+    short_df = pd.concat([meta_df, pd.DataFrame(single_dict)], axis=1)
+
+    # ============================================================
+    # DATA VALIDATION — drop invalid rows
+    # ============================================================
+    # Drop rows where tapsi_age == 'Not Registered' but
+    # tapsi_trip_count != '0' (contradictory response)
+
+    n_before = len(short_df)
+    valid_mask = pd.Series(True, index=short_df.index)
+
+    if "tapsi_age" in short_df.columns and "tapsi_trip_count" in short_df.columns:
+        invalid = (
+            (short_df["tapsi_age"] == "Not Registered") &
+            (short_df["tapsi_trip_count"] != "0")
         )
+        valid_mask &= ~invalid
 
-    mw_out_path = os.path.join(OUTPUT_DIR, "merged_wide_translated.csv")
-    mw.to_csv(mw_out_path, index=False, encoding="utf-8-sig")
-    print(
-        f"merged_wide_translated.csv written  ({mw.shape[0]} rows × {mw.shape[1]} cols)")
+    combined = combined.loc[valid_mask].reset_index(drop=True)
+    meta_df = meta_df.loc[valid_mask].reset_index(drop=True)
+    short_df = short_df.loc[valid_mask].reset_index(drop=True)
+
+    n_dropped = n_before - len(short_df)
+    if n_dropped:
+        print(f"\nDropped {n_dropped} invalid row(s) "
+              f"(tapsi_age='Not Registered' with tapsi_trip_count != '0')")
+
+    print("\nShort shape (meta + single):", short_df.shape)
+
+    # ============================================================
+    # MULTI GROUPING
+    # ============================================================
+
+    multi_groups = defaultdict(list)
+
+    for key in multi_keys:
+        long_title = mapping[key]["long"]
+        answers = mapping[key].get("answers", {})
+        answer_value = list(answers.values())[0] if answers else key
+        multi_groups[long_title].append((key, present_keys[key], answer_value))
+
+    # ============================================================
+    # WIDE SURVEY → meta + multi-choice (binary columns)
+    # ============================================================
+
+    multi_columns = {}
+
+    for long_title, options in multi_groups.items():
+        for key, norm_col, answer_value in options:
+            col_name = f"{long_title}__{answer_value}"
+            multi_columns[col_name] = (
+                combined[norm_col]
+                .notna()
+                .astype(int)
+            )
+
+    if multi_columns:
+        wide_df = pd.concat(
+            [meta_df, pd.DataFrame(multi_columns)], axis=1)
+    else:
+        wide_df = meta_df.copy()
+
+    print("Wide shape (meta + multi binary):", wide_df.shape)
+
+    # ============================================================
+    # LONG SURVEY → meta + multi-choice (melted rows)
+    # ============================================================
+
+    long_rows = []
+
+    for idx in combined.index:
+        meta_row = meta_df.loc[idx].to_dict()
+
+        for long_title, options in multi_groups.items():
+            for key, norm_col, answer_value in options:
+                if pd.notna(combined.at[idx, norm_col]):
+                    row = meta_row.copy()
+                    row["question"] = long_title
+                    row["answer"] = answer_value
+                    row["question_type"] = "multi_choice"
+                    long_rows.append(row)
+
+    long_df = pd.DataFrame(long_rows)
+    print("Long shape (meta + multi melted):", long_df.shape)
+
+    return short_df, wide_df, long_df
 
 
-# =============================================================================
+# ============================================================
 # MAIN
-# =============================================================================
+# ============================================================
+
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    print("Loading mapping...")
+    mapping = load_mapping(MAPPING_PATH)
+    raw_to_key = build_raw_to_key(mapping)
+
+    print("Loading raw files...")
+    combined, col_unique_vals, col_file_count = load_all_raw_files(RAW_DIR)
+
+    print("Checking unmapped columns...")
+    unmapped = find_unmapped_columns(
+        col_unique_vals, col_file_count, raw_to_key)
+
+    if unmapped:
+        unmapped_df = pd.DataFrame(unmapped)
+        out_path = os.path.join(OUTPUT_DIR, "unmapped_columns.csv")
+        unmapped_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"Unmapped columns found. Saved to {out_path}")
+        return
+
+    print("Checking for unmapped answers...")
+    unmapped_ans = find_unmapped_answers(col_unique_vals, mapping, raw_to_key)
+
+    if unmapped_ans:
+        unmapped_ans_df = pd.DataFrame(unmapped_ans)
+        out_path = os.path.join(OUTPUT_DIR, "unmapped_answers.csv")
+        unmapped_ans_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"\nERROR: {len(unmapped_ans)} unmapped answer(s) found across "
+              f"{unmapped_ans_df['mapping_key'].nunique()} question(s).")
+        print(f"Saved to {out_path}")
+        print("Please update column_rename_mapping.json and re-run.")
+        return
+
+    print("All columns and answers mapped. Processing...")
+
+    short_df, wide_df, long_df = process_data(combined, mapping, raw_to_key)
+
+    short_df.to_csv(os.path.join(OUTPUT_DIR, "short_survey.csv"),
+                    index=False, encoding="utf-8-sig")
+
+    wide_df.to_csv(os.path.join(OUTPUT_DIR, "wide_survey.csv"),
+                   index=False, encoding="utf-8-sig")
+
+    long_df.to_csv(os.path.join(OUTPUT_DIR, "long_survey.csv"),
+                   index=False, encoding="utf-8-sig")
+
+    print("\nDone.")
+    print("  short_survey.csv → meta + single-choice questions")
+    print("  wide_survey.csv  → meta + multi-choice (binary columns)")
+    print("  long_survey.csv  → meta + multi-choice (melted rows)")
+
 
 if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else "--help"
-
-    if mode == "--explore":
-        explore_data()
-    elif mode == "--clean":
-        clean_and_merge()
-    elif mode == "--translate":
-        translate_outputs()
-    elif mode == "--all":
-        explore_data()
-        clean_and_merge()
-        translate_outputs()
-    else:
-        print("Usage: python DS_cleaning.py --explore | --clean | --translate | --all")
+    main()
