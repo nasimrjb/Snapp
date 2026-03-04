@@ -2,7 +2,7 @@ import pandas as pd
 import json
 import os
 
-XLSX_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\column_rename.xlsx"
+XLSX_PATH = r"D:\Work\Driver Survey\DataSources\column_rename.xlsx"
 JSON_PATH = os.path.join(os.path.dirname(XLSX_PATH),
                          "column_rename_mapping.json")
 

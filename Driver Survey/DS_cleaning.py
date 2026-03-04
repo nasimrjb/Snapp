@@ -3,9 +3,9 @@ Driver Survey Data Processing Pipeline
 =======================================
 Reads raw weekly survey Excel files, validates columns against a JSON mapping,
 renames headers, recodes answers, and produces:
-  - short_survey.csv  → meta + single-choice questions
-  - wide_survey.csv   → meta + multi-choice questions (binary 0/1 columns)
-  - long_survey.csv   → meta + multi-choice questions (melted/stacked rows)
+  - short_survey.csv  → meta + single-choice questions + computed columns
+  - wide_survey.csv   → meta + multi-choice questions (binary 0/1 columns) + computed columns
+  - long_survey.csv   → meta + multi-choice questions (melted/stacked rows) + computed columns
 
 If unmapped columns are found, outputs unmapped_columns.csv and exits early.
 If unmapped answers are found in single/multi questions, outputs
@@ -29,15 +29,16 @@ import json
 import glob
 import re
 import unicodedata
+import numpy as np
 import pandas as pd
 from collections import defaultdict
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
-RAW_DIR = r"D:\OneDrive\Work\Driver Survey\raw"
-MAPPING_PATH = r"D:\OneDrive\Work\Driver Survey\DataSources\column_rename_mapping.json"
-OUTPUT_DIR = r"D:\OneDrive\Work\Driver Survey\processed"
+RAW_DIR = r"D:\Work\Driver Survey\raw"
+MAPPING_PATH = r"D:\Work\Driver Survey\DataSources\column_rename_mapping.json"
+OUTPUT_DIR = r"D:\Work\Driver Survey\processed"
 
 
 # ============================================================
@@ -243,6 +244,290 @@ def find_unmapped_columns(col_unique_vals, col_file_count, raw_to_key):
 
 
 # ============================================================
+# Computed columns
+# ============================================================
+
+def build_incentive_category(wide_df, platform):
+    """
+    Classify incentive into Money, Free-Commission, or both.
+
+    Uses wide_df binary columns which follow the naming pattern:
+        '{Platform} Incentive Type__{Answer Value}'
+    """
+    platform_title = platform.capitalize()  # "snapp" → "Snapp"
+
+    money_cols = [
+        f"{platform_title} Incentive Type__Pay After Ride",
+        f"{platform_title} Incentive Type__Income Guarantee",
+    ]
+    commfree_cols = [
+        f"{platform_title} Incentive Type__Ride-Based Commission-free",
+        f"{platform_title} Incentive Type__Earning-based Commission-free",
+    ]
+
+    # Only use columns that actually exist in wide_df
+    money_cols = [c for c in money_cols if c in wide_df.columns]
+    commfree_cols = [c for c in commfree_cols if c in wide_df.columns]
+
+    if money_cols:
+        money_used = wide_df[money_cols].astype(int).any(axis=1)
+    else:
+        money_used = pd.Series(False, index=wide_df.index)
+
+    if commfree_cols:
+        commfree_used = wide_df[commfree_cols].astype(int).any(axis=1)
+    else:
+        commfree_used = pd.Series(False, index=wide_df.index)
+
+    return np.select(
+        [
+            money_used & commfree_used,
+            money_used,
+            commfree_used,
+        ],
+        [
+            "Money & Free-commission",
+            "Money",
+            "Free-Commission",
+        ],
+        default=""
+    )
+
+
+def add_computed_columns(short_df, wide_df):
+    """
+    Add all computed/derived columns to short_df.
+    Uses recoded values from short_df for single-choice lookups,
+    and wide_df for multi-choice (incentive_type) binary columns.
+
+    Returns the modified short_df with new columns appended.
+    """
+
+    # ---- BASIC FLAGS ----
+    if "tapsi_age" in short_df.columns:
+        short_df["joint_by_signup"] = np.where(
+            short_df["tapsi_age"] == "Not Registered", 0, 1
+        )
+
+    if "tapsi_age" in short_df.columns and "tapsi_trip_count" in short_df.columns:
+        short_df["active_joint"] = np.where(
+            (short_df["tapsi_age"] == "Not Registered") |
+            (short_df["tapsi_trip_count"] == "0"),
+            0, 1
+        )
+
+    # ---- RIDE COUNT MAPPING ----
+    ride_map = {
+        "<5": 2.5,
+        "5_10": 7.5,
+        "11_20": 15,
+        "21_30": 25,
+        "31_40": 35,
+        "41_50": 45,
+        "51_60": 55,
+        "61_70": 65,
+        "71_80": 75,
+        ">80": 80,
+        "0": 0,     # tapsi_trip_count has "0" for drivers with no trips
+    }
+
+    if "snapp_trip_count" in short_df.columns:
+        short_df["snapp_ride"] = short_df["snapp_trip_count"].map(ride_map)
+    if "tapsi_trip_count" in short_df.columns:
+        short_df["tapsi_ride"] = short_df["tapsi_trip_count"].map(ride_map)
+
+    # ---- COMMISSION-FREE RIDE MAPPING ----
+    commfree_map = {
+        "<5": 2.5,
+        "5_10": 7.5,
+        "11_20": 15,
+        "21_30": 25,
+        "31_40": 35,
+        "41_50": 45,
+        "51_60": 55,
+        "61_70": 65,
+        "71_80": 75,
+        ">80": 80,
+    }
+
+    if "tapsi_trip_count_commfree_discount" in short_df.columns:
+        short_df["tapsi_commfree_disc_ride"] = short_df[
+            "tapsi_trip_count_commfree_discount"
+        ].map(commfree_map)
+    if "snapp_trip_count_commfree_discount" in short_df.columns:
+        short_df["snapp_commfree_disc_ride"] = short_df[
+            "snapp_trip_count_commfree_discount"
+        ].map(commfree_map)
+
+    # ---- DIFFERENCES ----
+    if "snapp_ride" in short_df.columns and "snapp_commfree_disc_ride" in short_df.columns:
+        short_df["snapp_diff_commfree"] = (
+            short_df["snapp_ride"] - short_df["snapp_commfree_disc_ride"]
+        )
+    if "tapsi_ride" in short_df.columns and "tapsi_commfree_disc_ride" in short_df.columns:
+        short_df["tapsi_diff_commfree"] = (
+            short_df["tapsi_ride"] - short_df["tapsi_commfree_disc_ride"]
+        )
+
+    # ---- FINAL COMMISSION-FREE VALUE ----
+    if "snapp_diff_commfree" in short_df.columns:
+        short_df["snapp_commfree"] = np.where(
+            short_df["snapp_diff_commfree"] < 0,
+            short_df["snapp_ride"],
+            short_df["snapp_commfree_disc_ride"],
+        )
+    if "tapsi_diff_commfree" in short_df.columns:
+        short_df["tapsi_commfree"] = np.where(
+            short_df["tapsi_diff_commfree"] < 0,
+            short_df["tapsi_ride"],
+            short_df["tapsi_commfree_disc_ride"],
+        )
+
+    # ---- INCENTIVE (RIAL) MAPPING ----
+    # NOTE: The JSON recodes to "< 100k" (with space) for the older ranges,
+    #       and to "<50k", "50_100k", ">1m", "50_250k" for newer survey waves.
+    incentive_map = {
+        "< 100k": 500_000,
+        "<100k": 500_000,       # alias (no space) just in case
+        "<50k": 250_000,
+        "50_100k": 750_000,
+        "50_250k": 1_500_000,
+        "100_200k": 1_500_000,
+        "100_250k": 1_750_000,
+        "200_400k": 3_000_000,
+        "250_500k": 3_750_000,
+        "400_600k": 5_000_000,
+        "500_750k": 6_250_000,
+        "600_800k": 7_000_000,
+        "750k_1m": 8_750_000,
+        "800k_1m": 9_000_000,
+        "1m_1.25m": 11_250_000,
+        "1.25m_1.5m": 13_750_000,
+        ">1m": 12_500_000,
+        ">1.5m": 17_500_000,
+    }
+
+    if "snapp_incentive_rial_details" in short_df.columns:
+        short_df["snapp_incentive"] = short_df[
+            "snapp_incentive_rial_details"
+        ].map(incentive_map)
+    if "tapsi_incentive_rial_details" in short_df.columns:
+        short_df["tapsi_incentive"] = short_df[
+            "tapsi_incentive_rial_details"
+        ].map(incentive_map)
+
+    # ---- WHEEL (TAPSI MAGICAL WINDOW INCOME) ----
+    wheel_map = {
+        "<20k": 150_000,
+        "20_40k": 300_000,
+        "40_60k": 500_000,
+        "60_80k": 700_000,
+        "80_100k": 900_000,
+        "100_150k": 1_250_000,
+        "150_200k": 1_750_000,
+        ">200k": 2_000_000,
+    }
+
+    if "tapsi_magical_window_income" in short_df.columns:
+        short_df["wheel"] = short_df["tapsi_magical_window_income"].map(
+            wheel_map
+        )
+
+    # ---- COOPERATION TYPE ----
+    coop_map = {
+        "few hours/month": "Part-Time",
+        "<20hour/mo": "Part-Time",
+        "5_20hour/week": "Part-Time",
+        "20_40h/week": "Part-Time",
+        ">40h/week": "Full-Time",
+        "8_12hour/day": "Full-Time",
+        ">12h/day": "Full-Time",
+    }
+
+    if "active_time" in short_df.columns:
+        short_df["cooperation_type"] = short_df["active_time"].map(coop_map)
+
+    # ---- LOC (LENGTH OF COOPERATION) ----
+    loc_map = {
+        "Not Registered": 0,
+        "less_than_1_month": 0.5,
+        "1_to_3_months": 2,
+        "less_than_3_months": 2,
+        "less_than_5_trips": 2.5,
+        "3_to_6_months": 4.5,
+        "5_and_10_trips": 7.5,
+        "6_to_12_months": 9,
+        "6_months_to_1_year": 9,
+        "10_and_20_trips": 15,
+        "1_to_2_years": 18,
+        "1_to_3_years": 24,
+        "20_and_30_trips": 25,
+        "2_to_3_years": 30,
+        "30_and_40_trips": 35,
+        "3_to_4_years": 42,
+        "40_and_50_trips": 45,
+        "3_to_5_years": 48,
+        "more_than_4_years": 54,
+        "50_and_60_trips": 55,
+        "60_and_70_trips": 65,
+        "5_to_7_years": 72,
+        "70_and_80_trips": 75,
+        "more_than_80_trips": 80,
+        "more_than_7_years": 96,
+    }
+
+    if "snapp_age" in short_df.columns:
+        short_df["snapp_LOC"] = short_df["snapp_age"].map(loc_map)
+    if "tapsi_age" in short_df.columns:
+        short_df["tapsi_LOC"] = short_df["tapsi_age"].map(loc_map)
+
+    # ---- AGE GROUP ----
+    age_group_map = {
+        "<18": "18_to_35",
+        "18_25": "18_to_35",
+        "26_35": "18_to_35",
+        "36_45": "more_than_35",
+        "46_55": "more_than_35",
+        "56_65": "more_than_35",
+        ">65": "more_than_35",
+    }
+
+    if "age" in short_df.columns:
+        short_df["age_group"] = short_df["age"].map(age_group_map)
+
+    # ---- EDUCATION ----
+    edu_map = {
+        "HighSchool_Diploma": 0,
+        "College Degree": 1,
+        "Bachelors": 1,
+        "Masters": 1,
+        "MD/PhD": 1,
+    }
+
+    if "education" in short_df.columns:
+        short_df["edu"] = short_df["education"].map(edu_map)
+
+    # ---- MARITAL STATUS ----
+    marr_map = {
+        "Single": 0,
+        "Married": 1,
+    }
+
+    if "marital_status" in short_df.columns:
+        short_df["marr_stat"] = short_df["marital_status"].map(marr_map)
+
+    # ---- INCENTIVE CATEGORY (uses wide_df multi-choice binary columns) ----
+    short_df["snapp_incentive_category"] = build_incentive_category(
+        wide_df, "snapp"
+    )
+    short_df["tapsi_incentive_category"] = build_incentive_category(
+        wide_df, "tapsi"
+    )
+
+    return short_df
+
+
+# ============================================================
 # Processing
 # ============================================================
 
@@ -389,13 +674,42 @@ def process_data(combined, mapping, raw_to_key):
     print("Wide shape (meta + multi binary):", wide_df.shape)
 
     # ============================================================
+    # COMPUTED COLUMNS — add to short_df (uses recoded values)
+    # ============================================================
+
+    short_df = add_computed_columns(short_df, wide_df)
+
+    # Identify which computed columns were added
+    computed_cols = [
+        c for c in short_df.columns
+        if c not in meta_df.columns
+        and c not in single_dict
+    ]
+    print(f"\nComputed columns added: {len(computed_cols)}")
+
+    # Also add computed columns to wide_df
+    for col in computed_cols:
+        wide_df[col] = short_df[col].values
+
+    print("Wide shape (after computed columns):", wide_df.shape)
+
+    # ============================================================
     # LONG SURVEY → meta + multi-choice (melted rows)
     # ============================================================
+
+    # Build a per-row computed dict for efficient long-format generation
+    computed_df = short_df[computed_cols] if computed_cols else pd.DataFrame(
+        index=short_df.index
+    )
 
     long_rows = []
 
     for idx in combined.index:
         meta_row = meta_df.loc[idx].to_dict()
+        # Add computed columns to each long row
+        if not computed_df.empty:
+            comp_row = computed_df.loc[idx].to_dict()
+            meta_row.update(comp_row)
 
         for long_title, options in multi_groups.items():
             for key, norm_col, answer_value in options:
@@ -464,9 +778,9 @@ def main():
                    index=False, encoding="utf-8-sig")
 
     print("\nDone.")
-    print("  short_survey.csv → meta + single-choice questions")
-    print("  wide_survey.csv  → meta + multi-choice (binary columns)")
-    print("  long_survey.csv  → meta + multi-choice (melted rows)")
+    print("  short_survey.csv → meta + single-choice + computed columns")
+    print("  wide_survey.csv  → meta + multi-choice (binary) + computed columns")
+    print("  long_survey.csv  → meta + multi-choice (melted) + computed columns")
 
 
 if __name__ == "__main__":
