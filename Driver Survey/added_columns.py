@@ -15,10 +15,10 @@ df = pd.read_excel(INPUT_CLEANED_SURVEY)
 # ===============================
 # BASIC FLAGS
 # ===============================
-df["joint_by_signup"] = np.where(df["age_tapsi"] == "Not Registered", 0, 1)
+df["joint_by_signup"] = np.where(df["tapsi_age"] == "Not Registered", 0, 1)
 
 df["active_joint"] = np.where(
-    (df["age_tapsi"] == "Not Registered") | (df["trip_count_tapsi"] == "0"),
+    (df["tapsi_age"] == "Not Registered") | (df["tapsi_trip_count"] == "0"),
     0,
     1
 )
@@ -37,8 +37,8 @@ ride_map_fa = {
     ">80": 80,
 }
 
-df["ride_snapp"] = df["trip_count_snapp"].map(ride_map_fa)
-df["ride_tapsi"] = df["trip_count_tapsi"].map(ride_map_fa)
+df["snapp_ride"] = df["snapp_trip_count"].map(ride_map_fa)
+df["tapsi_ride"] = df["tapsi_trip_count"].map(ride_map_fa)
 
 # ===============================
 # COMMISSION-FREE RIDE MAPPING
@@ -56,30 +56,30 @@ commfree_map = {
     ">80": 80,
 }
 
-df["commfree_disc_ride_tapsi"] = df["trip_count_commfree_discount_tapsi"].map(
+df["tapsi_commfree_disc_ride"] = df["tapsi_trip_count_commfree_discount"].map(
     commfree_map)
-df["commfree_disc_ride_snapp"] = df["trip_count_commfree_discount_snapp"].map(
+df["snapp_commfree_disc_ride"] = df["snapp_trip_count_commfree_discount"].map(
     commfree_map)
 
 # ===============================
 # DIFFERENCES
 # ===============================
-df["diff_commfree_snapp"] = df["ride_snapp"] - df["commfree_disc_ride_snapp"]
-df["diff_commfree_tapsi"] = df["ride_tapsi"] - df["commfree_disc_ride_tapsi"]
+df["snapp_diff_commfree"] = df["snapp_ride"] - df["snapp_commfree_disc_ride"]
+df["tapsi_diff_commfree"] = df["tapsi_ride"] - df["tapsi_commfree_disc_ride"]
 
 # ===============================
 # FINAL COMMISSION-FREE VALUE
 # ===============================
-df["commfree_snapp"] = np.where(
-    df["diff_commfree_snapp"] < 0,
-    df["ride_snapp"],
-    df["commfree_disc_ride_snapp"]
+df["snapp_commfree"] = np.where(
+    df["snapp_diff_commfree"] < 0,
+    df["snapp_ride"],
+    df["snapp_commfree_disc_ride"]
 )
 
-df["commfree_tapsi"] = np.where(
-    df["diff_commfree_tapsi"] < 0,
-    df["ride_tapsi"],
-    df["commfree_disc_ride_tapsi"]
+df["tapsi_commfree"] = np.where(
+    df["tapsi_diff_commfree"] < 0,
+    df["tapsi_ride"],
+    df["tapsi_commfree_disc_ride"]
 )
 
 # ===============================
@@ -102,8 +102,8 @@ incentive_map = {
     "1m_1.25m": 11_250_000,
 }
 
-df["incentive_snapp"] = df["incentive_rial_details_snapp"].map(incentive_map)
-df["incentive_tapsi"] = df["incentive_rial_details_tapsi"].map(incentive_map)
+df["snapp_incentive"] = df["snapp_incentive_rial_details"].map(incentive_map)
+df["tapsi_incentive"] = df["tapsi_incentive_rial_details"].map(incentive_map)
 
 # ===============================
 # WHEEL
@@ -119,7 +119,7 @@ wheel_map = {
     ">200k": 2_000_000,
 }
 
-df["wheel"] = df["magical_window_income_tapsi"].map(wheel_map)
+df["wheel"] = df["tapsi_magical_window_income"].map(wheel_map)
 
 # ===============================
 # COOPERATION TYPE
@@ -167,8 +167,8 @@ loc_map = {
     "more_than_7_years": 96,
 }
 
-df["snapp_LOC"] = df["age_snapp"].map(loc_map)
-df["tapsi_LOC"] = df["age_tapsi"].map(loc_map)
+df["snapp_LOC"] = df["snapp_age"].map(loc_map)
+df["tapsi_LOC"] = df["tapsi_age"].map(loc_map)
 
 # ===============================
 # AGE GROUP
@@ -215,13 +215,13 @@ df["marr_stat"] = df["marital_status"].map(marr_map)
 
 def build_incentive_category(df, platform):
     money_cols = [
-        f"incentive_type_pay_after_ride_{platform}",
-        f"incentive_type_inc_guarantee_{platform}",
+        f"{platform}_incentive_type_pay_after_ride",
+        f"{platform}_incentive_type_inc_guarantee",
     ]
 
     commfree_cols = [
-        f"incentive_type_ride_based_commfree_{platform}",
-        f"incentive_type_earning_based_commfree_{platform}",
+        f"{platform}_incentive_type_ride_based_commfree",
+        f"{platform}_incentive_type_earning_based_commfree",
     ]
 
     money_used = df[money_cols].replace("", np.nan).notna().any(axis=1)
@@ -242,8 +242,8 @@ def build_incentive_category(df, platform):
     )
 
 
-df["incentive_category_snapp"] = build_incentive_category(df, "snapp")
-df["incentive_category_tapsi"] = build_incentive_category(df, "tapsi")
+df["snapp_incentive_category"] = build_incentive_category(df, "snapp")
+df["tapsi_incentive_category"] = build_incentive_category(df, "tapsi")
 
 # ===============================
 # SAVE FINAL OUTPUT
