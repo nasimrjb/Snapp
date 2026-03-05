@@ -52,14 +52,12 @@ wide = wide[wide["recordID"].isin(short["recordID"])].copy()
 
 # ── Compute yearweek ────────────────────────────────────────────────
 
-short["datetime_parsed"] = pd.to_datetime(
-    short["datetime"], format="%m/%d/%Y %H:%M")
+short["datetime_parsed"] = pd.to_datetime(short["datetime"], format="mixed")
 short["year"] = short["datetime_parsed"].dt.year
 short["yearweek"] = (short["year"] % 100) * 100 + \
     short["weeknumber"].astype(int)
 
-wide["datetime_parsed"] = pd.to_datetime(
-    wide["datetime"], format="%m/%d/%Y %H:%M")
+wide["datetime_parsed"] = pd.to_datetime(wide["datetime"], format="mixed")
 wide["year"] = wide["datetime_parsed"].dt.year
 wide["yearweek"] = (wide["year"] % 100) * 100 + wide["weeknumber"].astype(int)
 
