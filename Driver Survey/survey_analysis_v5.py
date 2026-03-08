@@ -231,7 +231,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
     snapp_sat_mean = short["snapp_overall_satisfaction"].mean()
     tapsi_sat_mean = short["tapsi_overall_satisfaction"].mean()
     snapp_nps_val = nps_score(short["snapp_recommend"])
-    tapsi_nps_val = nps_score(short["tapsi_recommend"])
+    tapsi_nps_val = nps_score(short["tapsidriver_tapsi_recommend"])
     snapp_inc_mean = short["snapp_incentive"].mean() / 1e6
     tapsi_inc_mean = short["tapsi_incentive"].mean() / 1e6
 
@@ -492,7 +492,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # PAGE 9 – NPS BY YEARWEEK
     # ================================================================
     nps_weekly = short.groupby("yearweek").agg(
-        snapp_nps=("snapp_recommend", nps_score), tapsi_nps=("tapsi_recommend", nps_score)).dropna(how="all")
+        snapp_nps=("snapp_recommend", nps_score), tapsi_nps=("tapsidriver_tapsi_recommend", nps_score)).dropna(how="all")
     fig, ax = new_fig("NPS (Net Promoter Score) by Year-Week – Snapp vs Tapsi")
     if not nps_weekly["snapp_nps"].isna().all():
         ax.plot(nps_weekly.index.astype(
@@ -1161,7 +1161,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         snapp_overall=("snapp_overall_satisfaction", "mean"),
         tapsi_overall=("tapsi_overall_satisfaction", "mean"),
         snapp_rec=("snapp_recommend", "mean"),
-        tapsi_rec=("tapsi_recommend", "mean"),
+        tapsi_rec=("tapsidriver_tapsi_recommend", "mean"),
         n=("snapp_overall_satisfaction", "count"),
     ).reindex(active_grps)
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
@@ -1398,7 +1398,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
     top_cities = short["city"].value_counts().head(12).index
     city_sat = (short[short["city"].isin(top_cities)].groupby("city")
                 .agg(snapp_sat=("snapp_overall_satisfaction", "mean"), tapsi_sat=("tapsi_overall_satisfaction", "mean"),
-                     snapp_rec=("snapp_recommend", "mean"), tapsi_rec=("tapsi_recommend", "mean"),
+                     snapp_rec=("snapp_recommend", "mean"), tapsi_rec=("tapsidriver_tapsi_recommend", "mean"),
                      n=("snapp_overall_satisfaction", "count")).sort_values("snapp_sat"))
     fig, axes = plt.subplots(1, 2, figsize=(14, 7), facecolor=BG_COLOR)
     fig.suptitle("City-Level Satisfaction Comparison (Top 12 Cities)",
@@ -1599,7 +1599,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         tapsi_sat=("tapsi_overall_satisfaction", "mean"), snapp_ride=("snapp_ride", "mean"),
         tapsi_ride=("tapsi_ride", "mean"), snapp_inc=("snapp_incentive", "mean"),
         tapsi_inc=("tapsi_incentive", "mean"), snapp_rec=("snapp_recommend", "mean"),
-        tapsi_rec=("tapsi_recommend", "mean"))
+        tapsi_rec=("tapsidriver_tapsi_recommend", "mean"))
     fig, axes = plt.subplots(1, 3, figsize=(16, 5), facecolor=BG_COLOR)
     fig.suptitle("Joint vs Snapp Exclusive – Key Metric Comparison",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1766,7 +1766,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
          "Snapp PLATFORM NPS\n(recommend driving on Snapp)"),
         (axes[1, 0], "tapsi_refer_others", TAPSI_COLOR,
          "Tapsi APP NPS\n(recommend the Tapsi Driver app)"),
-        (axes[1, 1], "tapsi_recommend", TAPSI_COLOR,
+        (axes[1, 1], "tapsidriver_tapsi_recommend", TAPSI_COLOR,
          "Tapsi PLATFORM NPS\n(recommend driving on Tapsi)"),
     ]
     for ax, col, color, label in nps_pairs:
