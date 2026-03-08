@@ -20,7 +20,7 @@ A computed "weeknumber" column is added based on the datetime column:
   else weeknumber = ISO week.
 
 Usage:
-    python process_surveys.py
+    python DS_cleaning.py
 """
 
 import os
@@ -102,9 +102,41 @@ def build_raw_to_key(mapping):
     return raw_to_key
 
 
+def parse_datetime_column(series):
+    """
+    Parse a datetime column that may contain:
+    - Normal datetime strings (e.g. '2025/01/15', '2025-01-15 10:30:00')
+    - Excel serial date floats stored as strings (e.g. '45771.864...')
+    - Empty / NaN values
+
+    Returns a Series of proper Timestamps (or NaT for unparseable values).
+    """
+    def parse_one(val):
+        if pd.isna(val):
+            return pd.NaT
+        if isinstance(val, str):
+            val = val.strip()
+            if not val:
+                return pd.NaT
+            # Try normal datetime parse first
+            ts = pd.to_datetime(val, errors="coerce")
+            if ts is not pd.NaT:
+                return ts
+            # Try as Excel serial number (float stored as string)
+            try:
+                numeric = float(val)
+                if 1000 < numeric < 100000:
+                    return pd.Timestamp("1899-12-30") + pd.Timedelta(days=numeric)
+            except (ValueError, TypeError):
+                pass
+        return pd.NaT
+
+    return series.apply(parse_one)
+
+
 def compute_weeknumber(dt_series):
     """
-    Compute week number from a datetime series.
+    Compute week number from an already-parsed datetime series.
     Replicates the Excel formula:
         IF(WEEKDAY(date)=7, WEEKNUM(date)+1, WEEKNUM(date))
 
@@ -112,14 +144,27 @@ def compute_weeknumber(dt_series):
     Excel WEEKNUM (type 1): Week containing Jan 1 is week 1, weeks start Sunday.
 
     pandas dayofweek: Monday=0 ... Sunday=6  →  Saturday=5
+
+    Only computes on non-NaT rows to avoid NaN poisoning.
     """
-    dt = pd.to_datetime(dt_series, errors="coerce")
+    dt = dt_series
+    valid = dt.notna()
+
+    result = pd.Series(pd.NA, index=dt.index, dtype="Int64")
+
+    if valid.sum() == 0:
+        return result
+
+    dv = dt[valid]
 
     # Day of year (1-based)
-    doy = dt.dt.dayofyear
+    doy = dv.dt.dayofyear
 
     # What weekday is Jan 1 of each year? (Sunday=0 basis)
-    jan1 = pd.to_datetime(dt.dt.year.astype(str) + "-01-01", errors="coerce")
+    jan1 = pd.to_datetime(
+        dv.dt.year.astype(int).astype(str) + "-01-01",
+        format="%Y-%m-%d"
+    )
     # pandas dayofweek: Mon=0..Sun=6 → convert to Sun=0..Sat=6
     jan1_wday_sun = (jan1.dt.dayofweek + 1) % 7
 
@@ -127,11 +172,11 @@ def compute_weeknumber(dt_series):
     weeknum = (doy + jan1_wday_sun - 1) // 7 + 1
 
     # Saturday (dayofweek=5) or Sunday (dayofweek=6) → week + 1
-    is_weekend = dt.dt.dayofweek.isin([5, 6])
+    is_weekend = dv.dt.dayofweek.isin([5, 6])
 
-    weeknumber = weeknum.where(~is_weekend, weeknum + 1)
+    result[valid] = weeknum.where(~is_weekend, weeknum + 1).astype("Int64")
 
-    return weeknumber.astype("Int64")
+    return result
 
 
 def load_all_raw_files(raw_dir):
@@ -585,9 +630,17 @@ def process_data(combined, mapping, raw_to_key):
         meta_dict[key] = combined[present_keys[key]].copy()
     meta_dict["_source_file"] = combined["_source_file"]
 
-    # Add computed weeknumber from datetime
+    # Parse datetime column (handles normal strings + Excel serial numbers)
+    # and compute weeknumber from the parsed datetimes
     if "datetime" in meta_dict:
+        meta_dict["datetime"] = parse_datetime_column(meta_dict["datetime"])
         meta_dict["weeknumber"] = compute_weeknumber(meta_dict["datetime"])
+        n_parsed = meta_dict["datetime"].notna().sum()
+        n_total = len(meta_dict["datetime"])
+        print(f"\nDatetime parsing: {n_parsed:,} of {n_total:,} parsed "
+              f"({n_total - n_parsed:,} unparseable)")
+        print(f"Weeknumber computed: {meta_dict['weeknumber'].notna().sum():,} "
+              f"valid values")
     else:
         print("WARNING: 'datetime' column not found — weeknumber not computed")
 
