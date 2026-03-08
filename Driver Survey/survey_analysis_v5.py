@@ -570,10 +570,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
                   "Not Available": "Snapp Incentive Unsatisfaction__No Available Time",
                   "Non Payment": "Snapp Incentive Unsatisfaction__Non Payment"},
         "Tapsi": {"Improper Amount": "Tapsi Incentive Unsatisfaction__Improper Amount",
-                  "Difficult": "Tapsi Incentive Unsatisfaction__difficult",
-                  "Not Available": "Tapsi Incentive Unsatisfaction__Not Available",
-                  "No Time": "Tapsi Incentive Unsatisfaction__No Time todo",
-                  "Non Payment": "Tapsi Incentive Unsatisfaction__Non Payment"},
+                  "Difficult": "Tapsi Incentive Unsatisfaction__Difficult to do",
+                  "Not Enough Time": "Tapsi Incentive Unsatisfaction__not enough time  to do",
+                  "No Time": "Tapsi Incentive Unsatisfaction__I didn't have time to do it",
+                  "Non Payment": "Tapsi Incentive Unsatisfaction__Non Payment/delay"},
     }
     fig, axes = plt.subplots(1, 2, figsize=(
         14, 5), facecolor=BG_COLOR, sharey=True)
@@ -1253,10 +1253,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_title("Carpooling Offer Outcome", fontsize=11)
     style_ax(ax)
     ax = axes[1, 0]
-    carp_refusal = {"Canceled by Passenger": "Tapsi Carpooling Refusion__Canceled by Passenger",
-                    "Long Wait Time": "Tapsi Carpooling Refusion__Long Wait Time",
-                    "Passenger Distance": "Tapsi Carpooling Refusion__Passenger Distance",
-                    "Not Familiar": "Tapsi Carpooling Refusion__Not Familiar"}
+    carp_refusal = {"Canceled by Passenger": "Tapsi Carpooling refusal__Canceled by Passenger",
+                    "Long Wait Time": "Tapsi Carpooling refusal__Long Wait Time",
+                    "Passenger Distance": "Tapsi Carpooling refusal__Passenger Distance",
+                    "Not Familiar": "Tapsi Carpooling refusal__Not Familiar"}
     r_labels = list(carp_refusal.keys())
     r_vals = [
         wide[c].sum() if c in wide.columns else 0 for c in carp_refusal.values()]
@@ -1520,8 +1520,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     for ax, question, color, label in [
         (axes[0], "Tapsi Incentive Unsatisfaction",
          TAPSI_COLOR, "Incentive Unsatisfaction"),
-        (axes[1], "Tapsi Carpooling Refusion",
-         TAPSI_COLOR, "Carpooling Refusion"),
+        (axes[1], "Tapsi Carpooling refusal",
+         TAPSI_COLOR, "Carpooling Refusal"),
     ]:
         qdata = long[long["question"] == question]
         if len(qdata) == 0:
@@ -1680,8 +1680,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_ylabel("Count")
     style_ax(ax)
     ax = axes[1]
-    tapsi_notif_col = "incentive_got_messtapsi_age"
-    tapsi_partic_col = "tapsi_incentive_message_participation"
+    tapsi_notif_col = "tapsi_incentive_got_message"
+    tapsi_partic_col = "tapsi_incentive_participation"
     t_notif_vc = short[tapsi_notif_col].dropna().value_counts(
     ) if tapsi_notif_col in short.columns else pd.Series(dtype=int)
     t_partic_vc = short[tapsi_partic_col].dropna().value_counts(
@@ -1707,7 +1707,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
     fig.suptitle("Incentive Active Duration – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
     for ax, col, color, label in [
-        (axes[0], "snapp_incentive_time_limitation", SNAPP_COLOR, "Snapp"),
+        (axes[0], "snapp_incentive_length", SNAPP_COLOR, "Snapp"),
         (axes[1], "tapsi_incentive_active_duration", TAPSI_COLOR, "Tapsi"),
     ]:
         if col not in short.columns:
