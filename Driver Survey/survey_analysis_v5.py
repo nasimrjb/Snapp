@@ -63,59 +63,18 @@ wide = wide[wide["recordID"].isin(valid_ids)].copy()
 long = long[long["recordID"].isin(valid_ids)].copy()
 
 
-def parse_datetime_safe(series: pd.Series) -> pd.Series:
-    """
-    Parse a datetime column that may contain:
-    - Excel serial date floats (e.g. 45771.864...)
-    - Python datetime / Timestamp objects
-    - Date strings in various formats (e.g. '2025/01/15', '01/15/2025')
-    - NaN / None / NaT
-    """
-    def parse_one(val):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return pd.NaT
-        # Already a proper datetime
-        if isinstance(val, (pd.Timestamp,)):
-            return val
-        # Python native datetime
-        if hasattr(val, "year") and hasattr(val, "month"):
-            return pd.Timestamp(val)
-        # Excel serial number (float or int, but NOT a year-like 4-digit int)
-        if isinstance(val, (int, float)):
-            numeric = float(val)
-            # Excel serials for modern dates are typically 40000–60000
-            if 1000 < numeric < 100000:
-                return pd.Timestamp("1899-12-30") + pd.Timedelta(days=numeric)
-            # Fallback: try treating as Unix timestamp in seconds
-            return pd.Timestamp(numeric, unit="s", tz=None)
-        # String: try mixed format parse
-        if isinstance(val, str):
-            val = val.strip()
-            if not val:
-                return pd.NaT
-            return pd.to_datetime(val, format="mixed", errors="coerce")
-        # Catch-all
-        return pd.to_datetime(val, errors="coerce")
-
-    return series.apply(parse_one)
-
+# ── Parse datetime & build yearweek ─────────────────────────────────
+# The cleaning script now outputs proper datetime strings and weeknumber.
+# We just need to parse datetime for year extraction and handle the
+# weeknumber column (which should already be numeric from DS_cleaning).
 
 for df in [short, wide, long]:
-    df["datetime_parsed"] = parse_datetime_safe(df["datetime"])
+    df["datetime_parsed"] = pd.to_datetime(df["datetime"], errors="coerce")
     df["year"] = df["datetime_parsed"].dt.year
     df["weeknumber"] = pd.to_numeric(df["weeknumber"], errors="coerce")
     df["yearweek"] = (
         (df["year"] % 100) * 100 + df["weeknumber"]
     ).where(df["weeknumber"].notna() & df["year"].notna()).astype("Int64")
-
-# ── DEBUG: put them HERE ──
-print("datetime sample:", short["datetime"].head(5).tolist())
-print("datetime_parsed sample:", short["datetime_parsed"].head(5).tolist())
-print("year nulls:", short["year"].isna().sum(), "of", len(short))
-print("weeknumber nulls:", short["weeknumber"].isna().sum(), "of", len(short))
-print("yearweek nulls:", short["yearweek"].isna().sum(), "of", len(short))
-print("yearweek value_counts:")
-print(short["yearweek"].value_counts().head(10))
 
 
 week_counts_all = short.groupby("yearweek").size()
@@ -1056,8 +1015,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # ================================================================
-    # PAGE 27 – COLLABORATION REASONS
+    # PAGES 27–65 (unchanged from v5)
     # ================================================================
+    # PAGE 27 – COLLABORATION REASONS
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Collaboration Reasons – Why Drivers Chose Each Platform",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1076,9 +1036,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
     # PAGE 28 – INCOME SOURCE PREFERENCE
-    # ================================================================
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Which Service Yields Better Income? (Driver Perception)",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1094,9 +1052,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
     # PAGE 29 – SATISFACTION BY YEARWEEK
-    # ================================================================
     fig, axes = plt.subplots(1, 3, figsize=(
         16, 5), facecolor=BG_COLOR, sharey=True)
     fig.suptitle("Avg Satisfaction by Year-Week: Snapp vs Tapsi",
@@ -1104,10 +1060,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     for ax, (scol, tcol, label) in zip(axes, SAT_PAIRS):
         weekly_sat = short.groupby("yearweek").agg(
             snapp=(scol, "mean"), tapsi=(tcol, "mean"))
-        ax.plot(weekly_sat.index.astype(
-            str), weekly_sat["snapp"], marker="o", color=SNAPP_COLOR, linewidth=2, label="Snapp")
-        ax.plot(weekly_sat.index.astype(
-            str), weekly_sat["tapsi"], marker="s", color=TAPSI_COLOR, linewidth=2, label="Tapsi")
+        ax.plot(weekly_sat.index.astype(str), weekly_sat["snapp"], marker="o",
+                color=SNAPP_COLOR, linewidth=2, label="Snapp")
+        ax.plot(weekly_sat.index.astype(str), weekly_sat["tapsi"], marker="s",
+                color=TAPSI_COLOR, linewidth=2, label="Tapsi")
         for idx, row in weekly_sat.iterrows():
             if not np.isnan(row["snapp"]):
                 ax.annotate(f"{row['snapp']:.2f}", (str(idx), row["snapp"]),
@@ -1124,25 +1080,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
     axes[0].set_ylabel("Mean Satisfaction (1–5)")
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 30 – SATISFACTION BY COOPERATION TYPE
-    # ================================================================
+    # PAGE 30–32 – SATISFACTION BY GROUP
     plot_sat_by_group(pdf, short, "cooperation_type", "Cooperation Type")
-    # ================================================================
-    # PAGE 31 – SATISFACTION BY CITY (top 10 cities)
-    # ================================================================
     plot_sat_by_group(pdf, short, "city", "City (Top 10)",
                       top_n=10, min_group_size=20)
-
-    # ================================================================
-    # PAGE 32 – SATISFACTION BY DRIVER TYPE
-    # ================================================================
     plot_sat_by_group(pdf, short, "driver_type",
                       "Driver Type (Snapp Exclusive vs Joint)")
 
-    # ================================================================
-    # PAGE 33 – SATISFACTION HONEYMOON EFFECT (by Snapp tenure)
-    # ================================================================
+    # PAGE 33 – SATISFACTION HONEYMOON EFFECT
     valid_tenure = [
         t for t in TENURE_ORDER if t in short["snapp_age"].unique()]
     sat_by_tenure = short.groupby("snapp_age").agg(
@@ -1154,19 +1099,17 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ).reindex(valid_tenure)
     labels_map = dict(zip(TENURE_ORDER, TENURE_LABELS))
     xticklabels = [labels_map.get(t, t) for t in valid_tenure]
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Honeymoon Effect – Satisfaction Declines with Snapp Tenure",
                  fontsize=15, fontweight="bold", y=0.99)
-
     ax = axes[0]
     x = np.arange(len(valid_tenure))
     ax.plot(x, sat_by_tenure["snapp_overall"], marker="o", color=SNAPP_COLOR,
             linewidth=2.5, markersize=9, label="Overall Sat.")
-    ax.plot(x, sat_by_tenure["snapp_fare"],    marker="s", color=ACCENT,
-            linewidth=2,   markersize=7, linestyle="--", label="Fare Sat.")
-    ax.plot(x, sat_by_tenure["snapp_income"],  marker="^", color=ACCENT2,
-            linewidth=2,   markersize=7, linestyle="--", label="Income Sat.")
+    ax.plot(x, sat_by_tenure["snapp_fare"], marker="s", color=ACCENT,
+            linewidth=2, markersize=7, linestyle="--", label="Fare Sat.")
+    ax.plot(x, sat_by_tenure["snapp_income"], marker="^", color=ACCENT2,
+            linewidth=2, markersize=7, linestyle="--", label="Income Sat.")
     for i, (idx, row) in enumerate(sat_by_tenure.iterrows()):
         ax.annotate(f"{row['snapp_overall']:.2f}", (i, row["snapp_overall"]),
                     textcoords="offset points", xytext=(0, 10), ha="center", fontsize=9)
@@ -1178,7 +1121,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_title("Snapp Satisfaction by Tenure", fontsize=11)
     ax.legend(frameon=False, fontsize=9)
     style_ax(ax)
-
     ax = axes[1]
     ax.plot(x, sat_by_tenure["snapp_rec"], marker="D", color=TAPSI_COLOR,
             linewidth=2.5, markersize=9, label="Snapp Recommend (0–10)")
@@ -1197,15 +1139,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
     # PAGE 34 – SATISFACTION BY AGE GROUP
-    # ================================================================
     age_order = ["<18", "18_25", "26_35", "36_45", "46_55", "56_65", ">65"]
     plot_sat_by_group(pdf, short, "age", "Age Group", order=age_order)
 
-    # ================================================================
     # PAGE 35 – SATISFACTION BY ACTIVE TIME
-    # ================================================================
     active_order = ["few hours/month", "<20hour/mo", "5_20hour/week",
                     "20_40h/week", ">40h/week", "8_12hour/day", ">12h/day"]
     active_labels_display = {
@@ -1217,7 +1155,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
     df_active["active_time_ordered"] = df_active["active_time"].map(
         lambda x: active_order.index(x) if x in active_order else 99)
     df_active = df_active[df_active["active_time_ordered"] < 99]
-
     active_grps = [
         a for a in active_order if a in df_active["active_time"].unique()]
     active_sat = df_active.groupby("active_time").agg(
@@ -1227,14 +1164,12 @@ with PdfPages(OUTPUT_PDF) as pdf:
         tapsi_rec=("tapsi_recommend", "mean"),
         n=("snapp_overall_satisfaction", "count"),
     ).reindex(active_grps)
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Satisfaction & Recommendation by Driver Engagement Level",
                  fontsize=15, fontweight="bold", y=0.99)
     x = np.arange(len(active_grps))
     w = 0.35
     xlabels = [active_labels_display.get(a, a) for a in active_grps]
-
     ax = axes[0]
     ax.bar(x - w/2, active_sat["snapp_overall"], w,
            color=SNAPP_COLOR, label="Snapp", edgecolor="white")
@@ -1246,12 +1181,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_title("Overall Satisfaction", fontsize=11)
     ax.legend(frameon=False, fontsize=9)
     style_ax(ax)
-
     ax = axes[1]
-    ax.plot(xlabels, active_sat["snapp_rec"], marker="o", color=SNAPP_COLOR,
-            linewidth=2.5, label="Snapp Recommend")
-    ax.plot(xlabels, active_sat["tapsi_rec"], marker="s", color=TAPSI_COLOR,
-            linewidth=2.5, label="Tapsi Recommend")
+    ax.plot(xlabels, active_sat["snapp_rec"], marker="o",
+            color=SNAPP_COLOR, linewidth=2.5, label="Snapp Recommend")
+    ax.plot(xlabels, active_sat["tapsi_rec"], marker="s",
+            color=TAPSI_COLOR, linewidth=2.5, label="Tapsi Recommend")
     ax.set_ylim(0, 10)
     ax.set_title("Recommendation Score (0–10)", fontsize=11)
     ax.tick_params(axis="x", rotation=15)
@@ -1259,24 +1193,18 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 36 – SATISFACTION BY OCCUPATION (top 12 jobs with n≥100)
-    # ================================================================
+    # PAGE 36 – SATISFACTION BY OCCUPATION
     job_sat = short.groupby("original_job").agg(
         n=("snapp_overall_satisfaction", "count"),
         snapp_overall=("snapp_overall_satisfaction", "mean"),
         tapsi_overall=("tapsi_overall_satisfaction", "mean"),
         snapp_rec=("snapp_recommend", "mean"),
     ).query("n >= 100").sort_values("snapp_overall")
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 7), facecolor=BG_COLOR)
     fig.suptitle("Satisfaction by Primary Occupation (jobs with n≥100)",
                  fontsize=15, fontweight="bold", y=0.99)
-
     ax = axes[0]
     jobs = job_sat.index.tolist()
-    x = np.arange(len(jobs))
-    w = 0.35
     ax.barh(jobs, job_sat["snapp_overall"],
             color=SNAPP_COLOR, alpha=0.85, label="Snapp Overall")
     ax.barh(jobs, job_sat["tapsi_overall"], color=TAPSI_COLOR,
@@ -1288,10 +1216,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.text(row["snapp_overall"] + 0.02, i,
                 f"{row['snapp_overall']:.2f} / {row['tapsi_overall']:.2f}", va="center", fontsize=8)
     ax.set_xlabel("Mean Satisfaction (1–5)")
-
     ax = axes[1]
-    bar_colors = [SNAPP_COLOR if v >= job_sat["snapp_rec"].median() else GREY
-                  for v in job_sat["snapp_rec"]]
+    bar_colors = [SNAPP_COLOR if v >= job_sat["snapp_rec"].median(
+    ) else GREY for v in job_sat["snapp_rec"]]
     ax.barh(jobs, job_sat["snapp_rec"], color=bar_colors, edgecolor="white")
     ax.axvline(job_sat["snapp_rec"].median(), color="black", linestyle="--", linewidth=1,
                label=f"Median: {job_sat['snapp_rec'].median():.1f}")
@@ -1304,40 +1231,32 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 37 – TAPSI CARPOOLING FULL ANALYSIS
-    # ================================================================
+    # PAGE 37 – TAPSI CARPOOLING
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), facecolor=BG_COLOR)
     fig.suptitle("Tapsi Carpooling – Familiarity, Adoption, Refusal & Satisfaction",
                  fontsize=15, fontweight="bold", y=0.97)
-
     ax = axes[0, 0]
     fam = short["tapsi_carpooling_familiar"].value_counts()
-    ax.pie(fam.values, labels=fam.index, autopct="%1.0f%%",
-           colors=[TAPSI_COLOR, LGREY], startangle=90, wedgeprops={"edgecolor": "white"})
+    ax.pie(fam.values, labels=fam.index, autopct="%1.0f%%", colors=[
+           TAPSI_COLOR, LGREY], startangle=90, wedgeprops={"edgecolor": "white"})
     ax.set_title("Carpooling Familiarity", fontsize=11)
-
     ax = axes[0, 1]
     offer_data = short["tapsi_carpooling_gotoffer_accepted"].dropna(
     ).value_counts()
     offer_colors = {"No": LGREY, "got offer - rejected": "#FF6D00",
                     "got offer - accepted": "#66BB6A"}
-    ax.barh(offer_data.index, offer_data.values,
-            color=[offer_colors.get(k, GREY) for k in offer_data.index], edgecolor="white")
+    ax.barh(offer_data.index, offer_data.values, color=[
+            offer_colors.get(k, GREY) for k in offer_data.index], edgecolor="white")
     total = offer_data.sum()
     for i, v in enumerate(offer_data.values):
         ax.text(v + 5, i, f"{v} ({v/total*100:.0f}%)", va="center", fontsize=9)
     ax.set_title("Carpooling Offer Outcome", fontsize=11)
     style_ax(ax)
-
     ax = axes[1, 0]
-    # Carpooling refusal reasons from wide
-    carp_refusal = {
-        "Canceled by Passenger": "Tapsi Carpooling Refusion__Canceled by Passenger",
-        "Long Wait Time":        "Tapsi Carpooling Refusion__Long Wait Time",
-        "Passenger Distance":    "Tapsi Carpooling Refusion__Passenger Distance",
-        "Not Familiar":          "Tapsi Carpooling Refusion__Not Familiar",
-    }
+    carp_refusal = {"Canceled by Passenger": "Tapsi Carpooling Refusion__Canceled by Passenger",
+                    "Long Wait Time": "Tapsi Carpooling Refusion__Long Wait Time",
+                    "Passenger Distance": "Tapsi Carpooling Refusion__Passenger Distance",
+                    "Not Familiar": "Tapsi Carpooling Refusion__Not Familiar"}
     r_labels = list(carp_refusal.keys())
     r_vals = [
         wide[c].sum() if c in wide.columns else 0 for c in carp_refusal.values()]
@@ -1346,12 +1265,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.text(v + 2, i, str(int(v)), va="center", fontsize=9)
     ax.set_title("Carpooling Refusal Reasons (wide_survey)", fontsize=11)
     style_ax(ax)
-
     ax = axes[1, 1]
     carp_sat = short["tapsi_carpooling_satisfaction_overall"].dropna()
     sat_counts = carp_sat.value_counts().sort_index()
-    ax.bar(sat_counts.index.astype(int).astype(str), sat_counts.values,
-           color=TAPSI_COLOR, edgecolor="white")
+    ax.bar(sat_counts.index.astype(int).astype(str),
+           sat_counts.values, color=TAPSI_COLOR, edgecolor="white")
     total = sat_counts.sum()
     for xi, v in zip(sat_counts.index.astype(int).astype(str), sat_counts.values):
         ax.text(xi, v + 1, f"{v} ({v/total*100:.0f}%)",
@@ -1362,23 +1280,17 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 38 – ECOPLUS & MAGICAL WINDOW ADOPTION
-    # ================================================================
+    # PAGE 38 – ECOPLUS & MAGICAL WINDOW
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), facecolor=BG_COLOR)
     fig.suptitle("Feature Adoption – Snapp EcoPlus & Tapsi Magical Window",
                  fontsize=15, fontweight="bold", y=0.99)
-
     ax = axes[0]
     ecoplus_familiar = short["snapp_ecoplus_familiar"].dropna().value_counts()
     ecoplus_usage = short["snapp_ecoplus_access_usage"].dropna().value_counts()
     cats = ["Familiar", "Has Access\n& Uses",
             "Has Access\n& Not Using", "Not Familiar"]
-    n_familiar = ecoplus_familiar.get("Yes", 0)
-    n_not_familiar = ecoplus_familiar.get("No", 0)
-    n_uses = ecoplus_usage.get("Yes-Yes", 0)
-    n_access_noUse = ecoplus_usage.get("Yes-No", 0)
-    vals = [n_familiar, n_uses, n_access_noUse, n_not_familiar]
+    vals = [ecoplus_familiar.get("Yes", 0), ecoplus_usage.get("Yes-Yes", 0),
+            ecoplus_usage.get("Yes-No", 0), ecoplus_familiar.get("No", 0)]
     colors_ = [SNAPP_COLOR, "#66BB6A", "#FFA726", LGREY]
     ax.bar(cats, vals, color=colors_, edgecolor="white")
     total = len(short)
@@ -1387,12 +1299,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 ha="center", fontsize=9)
     ax.set_title("Snapp EcoPlus Adoption Funnel", fontsize=11)
     style_ax(ax)
-
     ax = axes[1]
     mw = short["tapsi_magical_window"].dropna().value_counts()
     mw_colors = {"Yes": TAPSI_COLOR, "No": "#FFA726", "Not Familiar": LGREY}
-    ax.bar(mw.index, mw.values,
-           color=[mw_colors.get(k, GREY) for k in mw.index], edgecolor="white")
+    ax.bar(mw.index, mw.values, color=[mw_colors.get(
+        k, GREY) for k in mw.index], edgecolor="white")
     total_mw = mw.sum()
     for i, (k, v) in enumerate(mw.items()):
         ax.text(i, v + 10, f"{v:,} ({v/total_mw*100:.0f}%)",
@@ -1401,21 +1312,17 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 39 – DRIVER PRIVACY & PARTICIPATION FEELINGS
-    # ================================================================
+    # PAGE 39 – DRIVER PRIVACY
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), facecolor=BG_COLOR)
     fig.suptitle("Driver Privacy & Participation Attitudes (Snapp)",
                  fontsize=15, fontweight="bold", y=0.99)
-
     ax = axes[0]
     feeling = short["snapp_participate_feeling"].dropna().value_counts()
     total_f = feeling.sum()
-    feel_colors = {"no difference": SNAPP_COLOR, "no worry": "#66BB6A",
-                   "talk to some people": ACCENT,
+    feel_colors = {"no difference": SNAPP_COLOR, "no worry": "#66BB6A", "talk to some people": ACCENT,
                    "prefer not to talk": "#FFA726", "no talk at all": "#EF5350"}
-    ax.barh(feeling.index, feeling.values,
-            color=[feel_colors.get(k, GREY) for k in feeling.index], edgecolor="white")
+    ax.barh(feeling.index, feeling.values, color=[feel_colors.get(
+        k, GREY) for k in feeling.index], edgecolor="white")
     for i, v in enumerate(feeling.values):
         ax.text(v + 3, i, f"{v} ({v/total_f*100:.0f}%)",
                 va="center", fontsize=9)
@@ -1423,7 +1330,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
         "Comfort Level When Working\nAround Other People", fontsize=11)
     ax.set_xlabel("Count")
     style_ax(ax)
-
     ax = axes[1]
     reason = short["snapp_not_talking_reason"].dropna().value_counts()
     total_r = reason.sum()
@@ -1436,15 +1342,12 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 40 – DEMAND & MISSED DEMAND ANALYSIS
-    # ================================================================
+    # PAGE 40 – DEMAND
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), facecolor=BG_COLOR)
     fig.suptitle("Demand & Supply – How Much Demand Do Drivers Process?",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, col, color, label in [
-        (axes[0], "demand_process", ACCENT,  "% of Demand Processed"),
+        (axes[0], "demand_process", ACCENT, "% of Demand Processed"),
         (axes[1], "missed_demand_per_10", ACCENT2, "Missed per 10 Trips"),
         (axes[2], "max_demand", SNAPP_COLOR, "Max Simultaneous Demand"),
     ]:
@@ -1458,9 +1361,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 41 – COMMISSION-FREE RIDES VS TOTAL RIDES
-    # ================================================================
+    # PAGE 41 – COMMISSION-FREE RIDES
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Commission-Free Rides vs Total Rides",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1482,9 +1383,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
     axes[0].set_ylabel("Commission-Free Rides")
     save_fig(pdf, fig)
 
-    # ================================================================
     # PAGE 42 – TOP 15 CITIES
-    # ================================================================
     city_counts = short["city"].value_counts().head(15)
     fig, ax = new_fig("Top 15 Cities by Response Count")
     ax.barh(city_counts.index[::-1], city_counts.values[::-1],
@@ -1495,25 +1394,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 43 – CITY SATISFACTION COMPARISON
-    # ================================================================
+    # PAGE 43 – CITY SATISFACTION
     top_cities = short["city"].value_counts().head(12).index
-    city_sat = (
-        short[short["city"].isin(top_cities)]
-        .groupby("city")
-        .agg(snapp_sat=("snapp_overall_satisfaction", "mean"),
-             tapsi_sat=("tapsi_overall_satisfaction", "mean"),
-             snapp_rec=("snapp_recommend", "mean"),
-             tapsi_rec=("tapsi_recommend", "mean"),
-             n=("snapp_overall_satisfaction", "count"))
-        .sort_values("snapp_sat")
-    )
-
+    city_sat = (short[short["city"].isin(top_cities)].groupby("city")
+                .agg(snapp_sat=("snapp_overall_satisfaction", "mean"), tapsi_sat=("tapsi_overall_satisfaction", "mean"),
+                     snapp_rec=("snapp_recommend", "mean"), tapsi_rec=("tapsi_recommend", "mean"),
+                     n=("snapp_overall_satisfaction", "count")).sort_values("snapp_sat"))
     fig, axes = plt.subplots(1, 2, figsize=(14, 7), facecolor=BG_COLOR)
     fig.suptitle("City-Level Satisfaction Comparison (Top 12 Cities)",
                  fontsize=15, fontweight="bold", y=0.99)
-
     cities = city_sat.index.tolist()
     x = np.arange(len(cities))
     w = 0.35
@@ -1529,7 +1418,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_title("Overall Satisfaction", fontsize=11)
     ax.legend(frameon=False, fontsize=9)
     style_ax(ax)
-
     ax = axes[1]
     ax.barh(x - w/2, city_sat["snapp_rec"], w,
             color=SNAPP_COLOR, label="Snapp", edgecolor="white")
@@ -1543,13 +1431,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 44 – REGISTRATION TYPE & REFERRAL FUNNEL
-    # ================================================================
+    # PAGE 44 – REGISTRATION
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), facecolor=BG_COLOR)
     fig.suptitle("Registration & Referral Analysis",
                  fontsize=15, fontweight="bold", y=0.97)
-
     for (ax, col, color, label) in [
         (axes[0, 0], "snapp_register_type",
          SNAPP_COLOR, "Snapp Registration Type"),
@@ -1571,37 +1456,20 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 45 – ★ LONG_SURVEY: INCENTIVE TYPE (Snapp vs Tapsi)
-    # ================================================================
-    plot_long_snapp_vs_tapsi(pdf, long,
-                             "Snapp Incentive Type", "Tapsi Incentive Type",
-                             "Incentive Type – long_survey")
+    # PAGES 45–50 – LONG SURVEY PAGES
+    plot_long_snapp_vs_tapsi(pdf, long, "Snapp Incentive Type",
+                             "Tapsi Incentive Type", "Incentive Type – long_survey")
+    plot_long_snapp_vs_tapsi(pdf, long, "Snapp Incentive GotBonus",
+                             "Tapsi Incentive GotBonus", "Incentive Got Bonus – long_survey")
+    plot_long_snapp_vs_tapsi(pdf, long, "Snapp Customer Support Category",
+                             "Tapsi Customer Support Category", "Customer Support Categories – long_survey")
 
-    # ================================================================
-    # PAGE 46 – ★ LONG_SURVEY: INCENTIVE GOT BONUS (Snapp vs Tapsi)
-    # ================================================================
-    plot_long_snapp_vs_tapsi(pdf, long,
-                             "Snapp Incentive GotBonus", "Tapsi Incentive GotBonus",
-                             "Incentive Got Bonus – long_survey")
-
-    # ================================================================
-    # PAGE 47 – ★ LONG_SURVEY: CUSTOMER SUPPORT (Snapp vs Tapsi)
-    # ================================================================
-    plot_long_snapp_vs_tapsi(pdf, long,
-                             "Snapp Customer Support Category", "Tapsi Customer Support Category",
-                             "Customer Support Categories – long_survey")
-
-    # ================================================================
-    # PAGE 48 – ★ LONG_SURVEY: SNAPP NAVIGATION UNSATISFACTION
-    # ================================================================
+    # PAGE 48 – SNAPP NAVIGATION ISSUES
     nav_unsat_q = long[long["question"] == "Snapp Navigation Unsatisfaction"]
     nav_refusal_q = long[long["question"] == "Snapp Navigation Refusal"]
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Snapp Navigation Issues – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, qdata, color, label in [
         (axes[0], nav_unsat_q, SNAPP_COLOR, "Navigation Unsatisfaction"),
         (axes[1], nav_refusal_q, ACCENT, "Navigation Refusal Reasons"),
@@ -1621,16 +1489,13 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 49 – ★ LONG_SURVEY: DECLINE REASON & SNAPPDRIVER APP MENU
-    # ================================================================
+    # PAGE 49 – DECLINE REASON & APP MENU
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Decline Reason & SnappDriver App Menu Usage – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, question, color, label in [
-        (axes[0], "Decline Reason",       SNAPP_COLOR, "Decline Reason"),
-        (axes[1], "SnappDriver App Menu", ACCENT,      "SnappDriver App Menu"),
+        (axes[0], "Decline Reason", SNAPP_COLOR, "Decline Reason"),
+        (axes[1], "SnappDriver App Menu", ACCENT, "SnappDriver App Menu"),
     ]:
         qdata = long[long["question"] == question]
         if len(qdata) == 0:
@@ -1648,13 +1513,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 50 – ★ LONG_SURVEY: TAPSI-ONLY QUESTIONS
-    # ================================================================
+    # PAGE 50 – TAPSI-ONLY
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor=BG_COLOR)
     fig.suptitle("Tapsi-Only Questions – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, question, color, label in [
         (axes[0], "Tapsi Incentive Unsatisfaction",
          TAPSI_COLOR, "Incentive Unsatisfaction"),
@@ -1677,9 +1539,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 51 – ★ LONG_SURVEY: CUSTOMER SUPPORT BY DRIVER TYPE
-    # ================================================================
+    # PAGE 51 – CS BY DRIVER TYPE
     for q, platform, color in [
         ("Snapp Customer Support Category", "Snapp", SNAPP_COLOR),
         ("Tapsi Customer Support Category", "Tapsi", TAPSI_COLOR),
@@ -1709,17 +1569,13 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
         save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 53 – ★ LONG_SURVEY: SNAPP USAGE APP & ECOPLUS REFUSAL
-    # ================================================================
+    # PAGE 53 – APP USAGE & ECOPLUS REFUSAL
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor=BG_COLOR)
     fig.suptitle("Snapp App Usage & EcoPlus Refusal – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, question, color, label in [
-        (axes[0], "Snapp Usage app",       SNAPP_COLOR, "Snapp App Usage"),
-        (axes[1], "Snapp Ecoplus Refusal",
-         ACCENT2,     "EcoPlus Refusal Reasons"),
+        (axes[0], "Snapp Usage app", SNAPP_COLOR, "Snapp App Usage"),
+        (axes[1], "Snapp Ecoplus Refusal", ACCENT2, "EcoPlus Refusal Reasons"),
     ]:
         qdata = long[long["question"] == question]
         if len(qdata) == 0:
@@ -1737,28 +1593,19 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 54 – DRIVER TYPE KEY METRICS SUMMARY
-    # ================================================================
+    # PAGE 54 – DRIVER TYPE METRICS
     metrics_by_dt = short.groupby("driver_type").agg(
-        n=("snapp_overall_satisfaction", "count"),
-        snapp_sat=("snapp_overall_satisfaction", "mean"),
-        tapsi_sat=("tapsi_overall_satisfaction", "mean"),
-        snapp_ride=("snapp_ride", "mean"),
-        tapsi_ride=("tapsi_ride", "mean"),
-        snapp_inc=("snapp_incentive", "mean"),
-        tapsi_inc=("tapsi_incentive", "mean"),
-        snapp_rec=("snapp_recommend", "mean"),
-        tapsi_rec=("tapsi_recommend", "mean"),
-    )
-
+        n=("snapp_overall_satisfaction", "count"), snapp_sat=("snapp_overall_satisfaction", "mean"),
+        tapsi_sat=("tapsi_overall_satisfaction", "mean"), snapp_ride=("snapp_ride", "mean"),
+        tapsi_ride=("tapsi_ride", "mean"), snapp_inc=("snapp_incentive", "mean"),
+        tapsi_inc=("tapsi_incentive", "mean"), snapp_rec=("snapp_recommend", "mean"),
+        tapsi_rec=("tapsi_recommend", "mean"))
     fig, axes = plt.subplots(1, 3, figsize=(16, 5), facecolor=BG_COLOR)
     fig.suptitle("Joint vs Snapp Exclusive – Key Metric Comparison",
                  fontsize=15, fontweight="bold", y=0.99)
     groups_ = metrics_by_dt.index.tolist()
     x = np.arange(len(groups_))
     w = 0.35
-
     ax = axes[0]
     ax.bar(x - w/2, metrics_by_dt["snapp_sat"], w,
            color=SNAPP_COLOR, label="Snapp Sat.", edgecolor="white")
@@ -1775,7 +1622,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_title("Overall Satisfaction", fontsize=11)
     ax.legend(frameon=False, fontsize=9)
     style_ax(ax)
-
     ax = axes[1]
     ax.bar(x - w/2, metrics_by_dt["snapp_ride"], w,
            color=SNAPP_COLOR, label="Snapp Rides", edgecolor="white")
@@ -1791,7 +1637,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
     ax.set_title("Avg Weekly Rides", fontsize=11)
     ax.legend(frameon=False, fontsize=9)
     style_ax(ax)
-
     ax = axes[2]
     ax.bar(x - w/2, metrics_by_dt["snapp_inc"] / 1e6, w,
            color=SNAPP_COLOR, label="Snapp Incentive", edgecolor="white")
@@ -1809,63 +1654,45 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 55 – INCENTIVE FULL FUNNEL (Snapp vs Tapsi)
-    # Notification received → Participated → Reward Type
-    # ================================================================
+    # PAGE 55 – INCENTIVE FUNNEL
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Incentive Full Funnel – Notification → Participation",
                  fontsize=15, fontweight="bold", y=0.99)
-
-    # Left: Snapp incentive notification & participation funnel
-    ax = axes[0]
-    notif_col = "incentive_got_messsnapp_age"
-    partic_col = "snapp_incentive_message_participation"
-    notif_vc = short[notif_col].dropna().value_counts()
-    partic_vc = short[partic_col].dropna().value_counts()
-    n_yes_notif = notif_vc.get("Yes", 0)
-    n_no_notif = notif_vc.get("No",  0)
-    n_yes_partic = partic_vc.get("Yes", 0)
-    n_no_partic = partic_vc.get("No",  0)
-    funnel_labels = ["Got Notification\n(Yes)", "Got Notification\n(No)",
-                     "Participated\n(Yes)", "Participated\n(No)"]
-    funnel_vals = [n_yes_notif, n_no_notif, n_yes_partic, n_no_partic]
+    funnel_labels = [
+        "Got Notification\n(Yes)", "Got Notification\n(No)", "Participated\n(Yes)", "Participated\n(No)"]
     funnel_colors = [SNAPP_COLOR, LGREY, "#66BB6A", "#EF5350"]
+    ax = axes[0]
+    notif_vc = short["incentive_got_messsnapp_age"].dropna().value_counts()
+    partic_vc = short["snapp_incentive_message_participation"].dropna(
+    ).value_counts()
+    funnel_vals = [notif_vc.get("Yes", 0), notif_vc.get(
+        "No", 0), partic_vc.get("Yes", 0), partic_vc.get("No", 0)]
     bars = ax.bar(funnel_labels, funnel_vals,
                   color=funnel_colors, edgecolor="white")
     total_n = notif_vc.sum()
     total_p = partic_vc.sum()
     totals_ = [total_n, total_n, total_p, total_p]
     for i, (b, v, tot) in enumerate(zip(bars, funnel_vals, totals_)):
-        ax.text(b.get_x() + b.get_width()/2, v + 30,
-                f"{v:,}\n({v/tot*100:.0f}%)", ha="center", fontsize=9)
+        if tot > 0:
+            ax.text(b.get_x() + b.get_width()/2, v + 30,
+                    f"{v:,}\n({v/tot*100:.0f}%)", ha="center", fontsize=9)
     ax.set_title("Snapp Incentive Funnel", fontsize=11)
     ax.set_ylabel("Count")
     style_ax(ax)
-
-    # Right: Tapsi incentive notification & participation funnel
     ax = axes[1]
     tapsi_notif_col = "incentive_got_messtapsi_age"
     tapsi_partic_col = "tapsi_incentive_message_participation"
-    if tapsi_notif_col in short.columns:
-        t_notif_vc = short[tapsi_notif_col].dropna().value_counts()
-    else:
-        t_notif_vc = pd.Series(dtype=int)
-    if tapsi_partic_col in short.columns:
-        t_partic_vc = short[tapsi_partic_col].dropna().value_counts()
-    else:
-        t_partic_vc = pd.Series(dtype=int)
-    t_yes_notif = t_notif_vc.get("Yes", 0)
-    t_no_notif = t_notif_vc.get("No",  0)
-    t_yes_partic = t_partic_vc.get("Yes", 0)
-    t_no_partic = t_partic_vc.get("No",  0)
-    t_funnel_vals = [t_yes_notif, t_no_notif, t_yes_partic, t_no_partic]
+    t_notif_vc = short[tapsi_notif_col].dropna().value_counts(
+    ) if tapsi_notif_col in short.columns else pd.Series(dtype=int)
+    t_partic_vc = short[tapsi_partic_col].dropna().value_counts(
+    ) if tapsi_partic_col in short.columns else pd.Series(dtype=int)
+    t_funnel_vals = [t_notif_vc.get("Yes", 0), t_notif_vc.get(
+        "No", 0), t_partic_vc.get("Yes", 0), t_partic_vc.get("No", 0)]
     bars2 = ax.bar(funnel_labels, t_funnel_vals,
                    color=funnel_colors, edgecolor="white")
     t_total_n = t_notif_vc.sum() if len(t_notif_vc) else 1
     t_total_p = t_partic_vc.sum() if len(t_partic_vc) else 1
-    t_totals_ = [t_total_n, t_total_n, t_total_p, t_total_p]
-    for i, (b, v, tot) in enumerate(zip(bars2, t_funnel_vals, t_totals_)):
+    for i, (b, v, tot) in enumerate(zip(bars2, t_funnel_vals, [t_total_n, t_total_n, t_total_p, t_total_p])):
         if tot > 0:
             ax.text(b.get_x() + b.get_width()/2, v + 30,
                     f"{v:,}\n({v/tot*100:.0f}%)", ha="center", fontsize=9)
@@ -1874,21 +1701,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 56 – INCENTIVE TIME WINDOW (Snapp vs Tapsi)
-    # How long was the incentive scheme active?
-    # ================================================================
+    # PAGE 56 – INCENTIVE TIME WINDOW
     time_order = ["Few Hours", "1 Day", "1_6 Days", "7 Days", ">7 Days"]
-    snapp_tw_col = "snapp_incentive_time_limitation"
-    tapsi_tw_col = "tapsi_incentive_active_duration"
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor=BG_COLOR)
     fig.suptitle("Incentive Active Duration – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, col, color, label in [
-        (axes[0], snapp_tw_col, SNAPP_COLOR, "Snapp"),
-        (axes[1], tapsi_tw_col, TAPSI_COLOR, "Tapsi"),
+        (axes[0], "snapp_incentive_time_limitation", SNAPP_COLOR, "Snapp"),
+        (axes[1], "tapsi_incentive_active_duration", TAPSI_COLOR, "Tapsi"),
     ]:
         if col not in short.columns:
             ax.set_title(f"{label} (no data)")
@@ -1908,27 +1728,20 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 57 – TAPSI RE-ACTIVATION TIMING
-    # How long had drivers been inactive before responding to incentive?
-    # ================================================================
+    # PAGE 57 – TAPSI RE-ACTIVATION
     inact_col = "tapsi_inactive_b4_incentive"
-    inact_order = ["Same Day", "1_3 Day Before", "4_7 Day Before",
-                   "1_4 Week Before", "1_3 Month Before",
-                   "3_6 Month Before", ">6 Month Before"]
-
+    inact_order = ["Same Day", "1_3 Day Before", "4_7 Day Before", "1_4 Week Before",
+                   "1_3 Month Before", "3_6 Month Before", ">6 Month Before"]
     fig, ax = plt.subplots(figsize=(12, 6), facecolor=BG_COLOR)
     fig.suptitle("Tapsi Re-activation Timing: Inactivity Before Incentive Response",
                  fontsize=15, fontweight="bold", y=1.01)
-
     if inact_col in short.columns:
         data = short[inact_col].dropna()
         present = [v for v in inact_order if v in data.values]
         vc = data.value_counts().reindex(present).dropna()
         total = vc.sum()
-        bar_colors = [TAPSI_COLOR if i == 0 else
-                      ("#FFA726" if i <= 2 else LGREY)
-                      for i in range(len(vc))]
+        bar_colors = [TAPSI_COLOR if i == 0 else (
+            "#FFA726" if i <= 2 else LGREY) for i in range(len(vc))]
         ax.barh(vc.index[::-1], vc.values[::-1],
                 color=list(reversed(bar_colors)), edgecolor="white")
         for i, (k, v) in enumerate(zip(vc.index[::-1], vc.values[::-1])):
@@ -1942,26 +1755,20 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
     # PAGE 58 – APP NPS vs PLATFORM NPS
-    # snapp_refer_others (App NPS) vs snapp_recommend (Platform NPS)
-    # tapsi_refer_others (App NPS) vs tapsi_recommend (Platform NPS)
-    # ================================================================
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG_COLOR)
     fig.suptitle("App NPS vs Platform NPS – Snapp & Tapsi",
                  fontsize=15, fontweight="bold", y=0.98)
-
     nps_pairs = [
         (axes[0, 0], "snapp_refer_others", SNAPP_COLOR,
          "Snapp APP NPS\n(recommend the SnappDriver app)"),
-        (axes[0, 1], "snapp_recommend",    SNAPP_COLOR,
+        (axes[0, 1], "snapp_recommend", SNAPP_COLOR,
          "Snapp PLATFORM NPS\n(recommend driving on Snapp)"),
         (axes[1, 0], "tapsi_refer_others", TAPSI_COLOR,
          "Tapsi APP NPS\n(recommend the Tapsi Driver app)"),
-        (axes[1, 1], "tapsi_recommend",    TAPSI_COLOR,
+        (axes[1, 1], "tapsi_recommend", TAPSI_COLOR,
          "Tapsi PLATFORM NPS\n(recommend driving on Tapsi)"),
     ]
-
     for ax, col, color, label in nps_pairs:
         if col not in short.columns:
             ax.set_title(f"{label}\n(no data)", fontsize=9)
@@ -1971,29 +1778,25 @@ with PdfPages(OUTPUT_PDF) as pdf:
         nps = nps_score(data)
         promoters = (data >= 9).sum()
         detractors = (data <= 6).sum()
-        neutrals = ((data >= 7) & (data <= 8)).sum()
         total = len(data)
         vc = data.value_counts().sort_index()
-        bar_clr = ["#EF5350" if s <= 6 else ("#B0BEC5" if s <= 8 else "#66BB6A")
-                   for s in vc.index]
+        bar_clr = ["#EF5350" if s <= 6 else (
+            "#B0BEC5" if s <= 8 else "#66BB6A") for s in vc.index]
         ax.bar(vc.index.astype(str), vc.values,
                color=bar_clr, edgecolor="white")
         for xi, (k, v) in enumerate(vc.items()):
             ax.text(xi, v + 3, f"{v}", ha="center", fontsize=7)
-        ax.set_title(f"{label}\nNPS={nps:+.0f}  |  P={promoters/total*100:.0f}% D={detractors/total*100:.0f}% (n={total:,})",
-                     fontsize=9)
+        ax.set_title(
+            f"{label}\nNPS={nps:+.0f}  |  P={promoters/total*100:.0f}% D={detractors/total*100:.0f}% (n={total:,})", fontsize=9)
         ax.set_xlabel("Score (0–10)")
         ax.set_ylabel("Count")
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 59 – COMMISSION KNOWLEDGE × SATISFACTION CROSS-TAB
-    # ================================================================
+    # PAGE 59 – COMMISSION KNOWLEDGE × SATISFACTION
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Commission Knowledge × Overall Satisfaction Cross-Tab",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, comm_col, sat_col, color, label in [
         (axes[0], "snapp_comm_info",
          "snapp_overall_satisfaction", SNAPP_COLOR, "Snapp"),
@@ -2007,12 +1810,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
             continue
         comm_groups = sub.groupby(comm_col)[sat_col].mean().sort_values()
         n_per_group = sub.groupby(comm_col)[sat_col].count()
-        bars = ax.barh(comm_groups.index, comm_groups.values,
-                       color=color, edgecolor="white", alpha=0.85)
+        ax.barh(comm_groups.index, comm_groups.values,
+                color=color, edgecolor="white", alpha=0.85)
         for i, (k, v) in enumerate(comm_groups.items()):
-            n = n_per_group[k]
-            ax.text(v + 0.02, i, f"{v:.2f}  (n={n:,})",
-                    va="center", fontsize=8)
+            ax.text(
+                v + 0.02, i, f"{v:.2f}  (n={n_per_group[k]:,})", va="center", fontsize=8)
         ax.set_xlim(0, 5.5)
         ax.axvline(sub[sat_col].mean(), color="black", linestyle="--", linewidth=1,
                    label=f"Overall mean: {sub[sat_col].mean():.2f}")
@@ -2022,21 +1824,16 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
     # PAGE 60 – UNPAID FARE FOLLOW-UP SATISFACTION
-    # snapp_satisfaction_followup_overall / _time vs Tapsi equivalents
-    # ================================================================
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Unpaid Fare Follow-up Satisfaction – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
-
     followup_pairs = [
         ("snapp_satisfaction_followup_overall", "tapsi_satisfaction_followup_overall",
          "Overall Satisfaction with Follow-up"),
-        ("snapp_satisfaction_followup_time",    "tapsi_satisfaction_followup_time",
+        ("snapp_satisfaction_followup_time", "tapsi_satisfaction_followup_time",
          "Satisfaction with Time-to-Resolve"),
     ]
-
     for ax, (scol, tcol, label) in zip(axes, followup_pairs):
         s_data = short[scol].dropna(
         ) if scol in short.columns else pd.Series(dtype=float)
@@ -2063,15 +1860,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 61 – TRIP LENGTH PREFERENCE BY PLATFORM
-    # snapp_accepted_trip_length vs tapsi_accepted_trip_length
-    # ================================================================
+    # PAGE 61 – TRIP LENGTH PREFERENCE
     trip_order = ["Short Trip", "Average Trip", "Long Trip"]
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Trip Length Preference – What Drivers Mostly Accept",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, col, color, label in [
         (axes[0], "snapp_accepted_trip_length", SNAPP_COLOR, "Snapp"),
         (axes[1], "tapsi_accepted_trip_length", TAPSI_COLOR, "Tapsi"),
@@ -2095,24 +1888,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 62 – NAVIGATION ACTUALLY USED IN LAST TRIP
-    # snapp_last_trip_navigation vs tapsi_navigation_type
-    # ================================================================
-    snapp_nav_order = ["Neshan", "Balad",
-                       "Google Map", "Waze", "No Navigation App"]
-    tapsi_nav_order = ["Neshan", "Balad",
-                       "In-App Navigation", "No Navigation App"]
-
+    # PAGE 62 – NAVIGATION IN LAST TRIP
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Navigation App Used in Last Trip – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, col, nav_order, color, label in [
-        (axes[0], "snapp_last_trip_navigation",
-         snapp_nav_order, SNAPP_COLOR, "Snapp"),
-        (axes[1], "tapsi_navigation_type",
-         tapsi_nav_order, TAPSI_COLOR, "Tapsi"),
+        (axes[0], "snapp_last_trip_navigation", ["Neshan", "Balad",
+         "Google Map", "Waze", "No Navigation App"], SNAPP_COLOR, "Snapp"),
+        (axes[1], "tapsi_navigation_type", ["Neshan", "Balad",
+         "In-App Navigation", "No Navigation App"], TAPSI_COLOR, "Tapsi"),
     ]:
         if col not in short.columns:
             ax.set_title(f"{label} (no data)")
@@ -2122,15 +1906,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         present = [v for v in nav_order if v in data.values]
         vc = data.value_counts().reindex(present).dropna()
         total = vc.sum()
-        bar_colors_nav = []
-        for k in vc.index:
-            if "No" in k:
-                bar_colors_nav.append(LGREY)
-            elif "In-App" in k:
-                bar_colors_nav.append(
-                    TAPSI_COLOR if color == TAPSI_COLOR else ACCENT2)
-            else:
-                bar_colors_nav.append(color)
+        bar_colors_nav = [LGREY if "No" in k else (
+            TAPSI_COLOR if "In-App" in k and color == TAPSI_COLOR else color) for k in vc.index]
         ax.barh(vc.index[::-1], vc.values[::-1],
                 color=list(reversed(bar_colors_nav)), edgecolor="white")
         for i, (k, v) in enumerate(zip(vc.index[::-1], vc.values[::-1])):
@@ -2142,14 +1919,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 63 – JOINING BONUS / REGISTRATION ORIGIN
-    # snapp_joining_bonus vs tapsi_joining_bonus
-    # ================================================================
+    # PAGE 63 – JOINING BONUS
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Joining Bonus & Registration Origin – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
-
     for ax, col, color, label in [
         (axes[0], "snapp_joining_bonus", SNAPP_COLOR, "Snapp"),
         (axes[1], "tapsi_joining_bonus", TAPSI_COLOR, "Tapsi"),
@@ -2161,8 +1934,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         data = short[col].dropna().value_counts()
         total = data.sum()
         bonus_colors = {"Yes": "#66BB6A", "No": "#EF5350"}
-        ax.bar(data.index, data.values,
-               color=[bonus_colors.get(k, GREY) for k in data.index], edgecolor="white")
+        ax.bar(data.index, data.values, color=[bonus_colors.get(
+            k, GREY) for k in data.index], edgecolor="white")
         for i, (k, v) in enumerate(data.items()):
             ax.text(i, v + 20, f"{v:,}\n({v/total*100:.0f}%)",
                     ha="center", fontsize=9)
@@ -2173,25 +1946,20 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 64 – TAPSI IN-APP & OFFLINE NAVIGATION DEEP-DIVE
-    # ================================================================
+    # PAGE 64 – TAPSI NAVIGATION DEEP-DIVE
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG_COLOR)
     fig.suptitle("Tapsi Navigation Deep-Dive – In-App & Offline Navigation",
                  fontsize=15, fontweight="bold", y=0.98)
-
-    nav_items = [
+    for ax, col, color, label in [
         (axes[0, 0], "tapsi_in_app_navigation_usage",
          TAPSI_COLOR, "Used Tapsi In-App Navigation"),
         (axes[0, 1], "tapsi_in_app_navigation_satisfaction",
          TAPSI_COLOR, "In-App Navigation Satisfaction (1–5)"),
         (axes[1, 0], "tapsi_offline_navigation_familiar",
-         "#5C6BC0",   "Familiar with Tapsi Offline Navigation"),
-        (axes[1, 1], "tapsi_offline_navigation_usage",
-         "#5C6BC0",   "Offline Navigation Usage During GPS Issues"),
-    ]
-
-    for ax, col, color, label in nav_items:
+         "#5C6BC0", "Familiar with Tapsi Offline Navigation"),
+        (axes[1, 1], "tapsi_offline_navigation_usage", "#5C6BC0",
+         "Offline Navigation Usage During GPS Issues"),
+    ]:
         if col not in short.columns:
             ax.set_title(f"{label}\n(no data)", fontsize=10)
             style_ax(ax)
@@ -2206,26 +1974,19 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_title(f"{label}  (n={total:,})", fontsize=10)
         ax.set_ylabel("Count")
         style_ax(ax)
-
-    # Add GPS improvement sub-chart in corner if space
     save_fig(pdf, fig)
 
-    # ================================================================
-    # PAGE 65 – TAPSI GPS BETTER + MAGICAL WINDOW INCOME & REFERRAL
-    # ================================================================
+    # PAGE 65 – TAPSI GPS + MAGICAL WINDOW + REFERRAL
     fig, axes = plt.subplots(1, 3, figsize=(16, 5), facecolor=BG_COLOR)
     fig.suptitle("Tapsi: GPS Performance Perception & Magical Window / Referral Program",
                  fontsize=15, fontweight="bold", y=0.99)
-
-    # Panel 1: Was Tapsi app better during GPS issues?
     ax = axes[0]
-    gps_col = "tapsi_gps_better"
-    if gps_col in short.columns:
-        data = short[gps_col].dropna().value_counts()
+    if "tapsi_gps_better" in short.columns:
+        data = short["tapsi_gps_better"].dropna().value_counts()
         total = data.sum()
         gps_colors = {"Yes": "#66BB6A", "No": "#EF5350", "Similar": "#FFA726"}
-        ax.bar(data.index, data.values,
-               color=[gps_colors.get(k, GREY) for k in data.index], edgecolor="white")
+        ax.bar(data.index, data.values, color=[gps_colors.get(
+            k, GREY) for k in data.index], edgecolor="white")
         for i, (k, v) in enumerate(data.items()):
             ax.text(i, v + 5, f"{v:,}\n({v/total*100:.0f}%)",
                     ha="center", fontsize=9)
@@ -2236,16 +1997,13 @@ with PdfPages(OUTPUT_PDF) as pdf:
     else:
         ax.set_title("tapsi_gps_better (no data)")
         style_ax(ax)
-
-    # Panel 2: Tapsi Magical Window awareness & income
     ax = axes[1]
-    mw_col = "tapsi_magical_window"
-    if mw_col in short.columns:
-        data = short[mw_col].dropna().value_counts()
+    if "tapsi_magical_window" in short.columns:
+        data = short["tapsi_magical_window"].dropna().value_counts()
         total = data.sum()
         mw_clrs = {"Yes": TAPSI_COLOR, "No": "#FFA726", "Not Familiar": LGREY}
-        ax.bar(data.index, data.values,
-               color=[mw_clrs.get(k, GREY) for k in data.index], edgecolor="white")
+        ax.bar(data.index, data.values, color=[mw_clrs.get(
+            k, GREY) for k in data.index], edgecolor="white")
         for i, (k, v) in enumerate(data.items()):
             ax.text(i, v + 10, f"{v:,}\n({v/total*100:.0f}%)",
                     ha="center", fontsize=9)
@@ -2256,8 +2014,6 @@ with PdfPages(OUTPUT_PDF) as pdf:
     else:
         ax.set_title("tapsi_magical_window (no data)")
         style_ax(ax)
-
-    # Panel 3: Tapsi Referral Program (from long survey)
     ax = axes[2]
     tapsi_ref_q = long[long["question"] ==
                        "Tapsi Incentive GotBonus"] if "question" in long.columns else pd.DataFrame()
