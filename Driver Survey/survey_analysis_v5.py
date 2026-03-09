@@ -32,9 +32,9 @@ matplotlib.use("Agg")
 warnings.filterwarnings("ignore")
 
 # ── Configuration ────────────────────────────────────────────────────
-SHORT_PATH = r"D:\Work\Driver Survey\processed\short_survey.csv"
-WIDE_PATH = r"D:\Work\Driver Survey\processed\wide_survey.csv"
-LONG_PATH = r"D:\Work\Driver Survey\processed\long_survey.csv"
+SHORT_PATH = r"D:\Work\Driver Survey\processed\short_survey_main.csv"
+WIDE_PATH = r"D:\Work\Driver Survey\processed\wide_survey_main.csv"
+LONG_PATH = r"D:\Work\Driver Survey\processed\long_survey_main.csv"
 OUTPUT_PDF = r"D:\Work\Driver Survey\processed\driver_survey_analysis_v5.pdf"
 
 SNAPP_COLOR = "#00C853"

@@ -2,10 +2,18 @@
 Driver Survey Data Processing Pipeline
 =======================================
 Reads raw weekly survey Excel files, validates columns against a JSON mapping,
-renames headers, recodes answers, and produces:
-  - short_survey.csv  → meta + single-choice questions + computed columns
-  - wide_survey.csv   → meta + multi-choice questions (binary 0/1 columns) + computed columns
-  - long_survey.csv   → meta + multi-choice questions (melted/stacked rows) + computed columns
+renames headers, recodes answers, and produces six CSV outputs split by question
+frequency (freq field in the mapping JSON):
+
+  _main outputs  (freq: always + often)
+  - short_survey_main.csv → meta + always/often single-choice + computed columns
+  - wide_survey_main.csv  → meta + always/often multi-choice (binary 0/1) + computed columns
+  - long_survey_main.csv  → meta + always/often multi-choice (melted/stacked rows) + computed columns
+
+  _rare outputs  (freq: rare)
+  - short_survey_rare.csv → meta + rare single-choice questions
+  - wide_survey_rare.csv  → meta + rare multi-choice questions (binary 0/1)
+  - long_survey_rare.csv  → meta + rare multi-choice questions (melted/stacked rows)
 
 If unmapped columns are found, outputs unmapped_columns.csv and exits early.
 If unmapped answers are found in single/multi questions, outputs
@@ -600,29 +608,42 @@ def process_data(combined, mapping, raw_to_key):
             if key not in skip_keys:
                 present_keys[key] = col
 
-    # Classify by type
-    meta_keys = []
-    single_keys = []
-    multi_keys = []
+    # Classify by type AND freq
+    #   main → freq: always or often (or unset)
+    #   rare → freq: rare
+    meta_keys        = []
+    main_single_keys = []
+    rare_single_keys = []
+    main_multi_keys  = []
+    rare_multi_keys  = []
 
     for key, col in present_keys.items():
         qtype = mapping[key]["type"]
+        freq  = mapping[key].get("freq")
         if qtype == "meta":
             if not key.startswith("ignore"):
                 meta_keys.append(key)
         elif qtype == "single":
-            single_keys.append(key)
+            if freq == "rare":
+                rare_single_keys.append(key)
+            else:
+                main_single_keys.append(key)
         elif qtype == "multi":
-            multi_keys.append(key)
+            if freq == "rare":
+                rare_multi_keys.append(key)
+            else:
+                main_multi_keys.append(key)
 
     print("\nColumn classification (after exclusions):")
-    print(f"  meta:   {len(meta_keys)}")
-    print(f"  single: {len(single_keys)}")
-    print(f"  multi:  {len(multi_keys)}")
-    print(f"  other:  (excluded)")
+    print(f"  meta:        {len(meta_keys)}")
+    print(f"  single main: {len(main_single_keys)}")
+    print(f"  single rare: {len(rare_single_keys)}")
+    print(f"  multi  main: {len(main_multi_keys)}")
+    print(f"  multi  rare: {len(rare_multi_keys)}")
+    print(f"  other:       (excluded)")
 
     # ============================================================
-    # BUILD META COLUMNS (shared across all outputs)
+    # BUILD META COLUMNS (shared by both versions)
     # ============================================================
 
     meta_dict = {}
@@ -630,13 +651,11 @@ def process_data(combined, mapping, raw_to_key):
         meta_dict[key] = combined[present_keys[key]].copy()
     meta_dict["_source_file"] = combined["_source_file"]
 
-    # Parse datetime column (handles normal strings + Excel serial numbers)
-    # and compute weeknumber from the parsed datetimes
     if "datetime" in meta_dict:
         meta_dict["datetime"] = parse_datetime_column(meta_dict["datetime"])
         meta_dict["weeknumber"] = compute_weeknumber(meta_dict["datetime"])
         n_parsed = meta_dict["datetime"].notna().sum()
-        n_total = len(meta_dict["datetime"])
+        n_total  = len(meta_dict["datetime"])
         print(f"\nDatetime parsing: {n_parsed:,} of {n_total:,} parsed "
               f"({n_total - n_parsed:,} unparseable)")
         print(f"Weeknumber computed: {meta_dict['weeknumber'].notna().sum():,} "
@@ -647,136 +666,174 @@ def process_data(combined, mapping, raw_to_key):
     meta_df = pd.DataFrame(meta_dict)
 
     # ============================================================
-    # SHORT SURVEY → meta + single-choice (recoded)
+    # RECODE ALL SINGLE-CHOICE
+    # (full set needed so tapsi_age / tapsi_trip_count are always
+    #  available for data validation regardless of their freq)
     # ============================================================
 
-    single_dict = {}
-    for key in single_keys:
-        col = combined[present_keys[key]].copy()
-        answers = mapping[key].get("answers")
+    def _recode_single(keys):
+        d = {}
+        for key in keys:
+            col     = combined[present_keys[key]].copy()
+            answers = mapping[key].get("answers")
+            if answers:
+                fuzzy_ans = {fuzzy_normalize(k): v for k, v in answers.items()}
+                col = col.map(
+                    lambda x, fa=fuzzy_ans: fa.get(fuzzy_normalize(x), x)
+                    if pd.notna(x) else x
+                )
+            d[key] = col
+        return d
 
-        if answers:
-            fuzzy_answers = {fuzzy_normalize(k): v for k, v in answers.items()}
-            col = col.map(lambda x: fuzzy_answers.get(
-                fuzzy_normalize(x), x) if pd.notna(x) else x)
-
-        single_dict[key] = col
-
-    short_df = pd.concat([meta_df, pd.DataFrame(single_dict)], axis=1)
+    all_single_dict = _recode_single(main_single_keys + rare_single_keys)
 
     # ============================================================
     # DATA VALIDATION — drop invalid rows
-    # ============================================================
     # Drop rows where tapsi_age == 'Not Registered' but
-    # tapsi_trip_count != '0' (contradictory response)
+    # tapsi_trip_count != '0' (contradictory response).
+    # Applied to the full combined so both versions share the
+    # same clean row set.
+    # ============================================================
 
-    n_before = len(short_df)
-    valid_mask = pd.Series(True, index=short_df.index)
+    _tmp       = pd.concat([meta_df, pd.DataFrame(all_single_dict)], axis=1)
+    n_before   = len(_tmp)
+    valid_mask = pd.Series(True, index=_tmp.index)
 
-    if "tapsi_age" in short_df.columns and "tapsi_trip_count" in short_df.columns:
+    if "tapsi_age" in _tmp.columns and "tapsi_trip_count" in _tmp.columns:
         invalid = (
-            (short_df["tapsi_age"] == "Not Registered") &
-            (short_df["tapsi_trip_count"] != "0")
+            (_tmp["tapsi_age"] == "Not Registered") &
+            (_tmp["tapsi_trip_count"] != "0")
         )
         valid_mask &= ~invalid
 
     combined = combined.loc[valid_mask].reset_index(drop=True)
-    meta_df = meta_df.loc[valid_mask].reset_index(drop=True)
-    short_df = short_df.loc[valid_mask].reset_index(drop=True)
+    meta_df  = meta_df.loc[valid_mask].reset_index(drop=True)
+    for key in all_single_dict:
+        all_single_dict[key] = (
+            all_single_dict[key].loc[valid_mask].reset_index(drop=True)
+        )
 
-    n_dropped = n_before - len(short_df)
+    n_dropped = n_before - len(combined)
     if n_dropped:
         print(f"\nDropped {n_dropped} invalid row(s) "
               f"(tapsi_age='Not Registered' with tapsi_trip_count != '0')")
 
-    print("\nShort shape (meta + single):", short_df.shape)
-
     # ============================================================
-    # MULTI GROUPING
+    # HELPERS
     # ============================================================
 
-    multi_groups = defaultdict(list)
+    def _build_multi_groups(keys):
+        groups = defaultdict(list)
+        for key in keys:
+            long_title   = mapping[key]["long"]
+            answers      = mapping[key].get("answers", {})
+            answer_value = list(answers.values())[0] if answers else key
+            groups[long_title].append((key, present_keys[key], answer_value))
+        return groups
 
-    for key in multi_keys:
-        long_title = mapping[key]["long"]
-        answers = mapping[key].get("answers", {})
-        answer_value = list(answers.values())[0] if answers else key
-        multi_groups[long_title].append((key, present_keys[key], answer_value))
-
-    # ============================================================
-    # WIDE SURVEY → meta + multi-choice (binary columns)
-    # ============================================================
-
-    multi_columns = {}
-
-    for long_title, options in multi_groups.items():
-        for key, norm_col, answer_value in options:
-            col_name = f"{long_title}__{answer_value}"
-            multi_columns[col_name] = (
-                combined[norm_col]
-                .notna()
-                .astype(int)
-            )
-
-    if multi_columns:
-        wide_df = pd.concat(
-            [meta_df, pd.DataFrame(multi_columns)], axis=1)
-    else:
-        wide_df = meta_df.copy()
-
-    print("Wide shape (meta + multi binary):", wide_df.shape)
+    def _build_wide(multi_groups_dict):
+        cols = {}
+        for long_title, options in multi_groups_dict.items():
+            for key, norm_col, answer_value in options:
+                col_name      = f"{long_title}__{answer_value}"
+                cols[col_name] = combined[norm_col].notna().astype(int)
+        if cols:
+            return pd.concat([meta_df, pd.DataFrame(cols)], axis=1)
+        return meta_df.copy()
 
     # ============================================================
-    # COMPUTED COLUMNS — add to short_df (uses recoded values)
+    # MAIN VERSION  (freq: always + often)
     # ============================================================
 
-    short_df = add_computed_columns(short_df, wide_df)
+    main_single_dict = {k: all_single_dict[k] for k in main_single_keys}
+    short_main = pd.concat([meta_df, pd.DataFrame(main_single_dict)], axis=1)
+    print(f"\nMain short shape (meta + single): {short_main.shape}")
 
-    # Identify which computed columns were added
-    computed_cols = [
-        c for c in short_df.columns
-        if c not in meta_df.columns
-        and c not in single_dict
+    main_multi_groups = _build_multi_groups(main_multi_keys)
+    wide_main = _build_wide(main_multi_groups)
+    print(f"Main wide shape (meta + multi binary): {wide_main.shape}")
+
+    short_main = add_computed_columns(short_main, wide_main)
+    main_computed_cols = [
+        c for c in short_main.columns
+        if c not in meta_df.columns and c not in main_single_dict
     ]
-    print(f"\nComputed columns added: {len(computed_cols)}")
-
-    # Also add computed columns to wide_df
-    for col in computed_cols:
-        wide_df[col] = short_df[col].values
-
-    print("Wide shape (after computed columns):", wide_df.shape)
+    print(f"Main computed columns added: {len(main_computed_cols)}")
+    for col in main_computed_cols:
+        wide_main[col] = short_main[col].values
+    print(f"Main wide shape (after computed columns): {wide_main.shape}")
 
     # ============================================================
-    # LONG SURVEY → meta + multi-choice (melted rows)
+    # RARE VERSION  (freq: rare)
     # ============================================================
 
-    # Build a per-row computed dict for efficient long-format generation
-    computed_df = short_df[computed_cols] if computed_cols else pd.DataFrame(
-        index=short_df.index
-    )
+    rare_single_dict = {k: all_single_dict[k] for k in rare_single_keys}
+    short_rare = pd.concat([meta_df, pd.DataFrame(rare_single_dict)], axis=1)
+    print(f"\nRare short shape (meta + single): {short_rare.shape}")
 
-    long_rows = []
+    rare_multi_groups = _build_multi_groups(rare_multi_keys)
+    wide_rare = _build_wide(rare_multi_groups)
+    print(f"Rare wide shape (meta + multi binary): {wide_rare.shape}")
+
+    short_rare = add_computed_columns(short_rare, wide_rare)
+    rare_computed_cols = [
+        c for c in short_rare.columns
+        if c not in meta_df.columns and c not in rare_single_dict
+    ]
+    print(f"Rare computed columns added: {len(rare_computed_cols)}")
+    for col in rare_computed_cols:
+        wide_rare[col] = short_rare[col].values
+    print(f"Rare wide shape (after computed columns): {wide_rare.shape}")
+
+    # ============================================================
+    # LONG SURVEYS — both built in a single pass over rows
+    # ============================================================
+
+    main_comp_df = (short_main[main_computed_cols]
+                    if main_computed_cols
+                    else pd.DataFrame(index=short_main.index))
+    rare_comp_df = (short_rare[rare_computed_cols]
+                    if rare_computed_cols
+                    else pd.DataFrame(index=short_rare.index))
+
+    long_rows_main = []
+    long_rows_rare = []
 
     for idx in combined.index:
         meta_row = meta_df.loc[idx].to_dict()
-        # Add computed columns to each long row
-        if not computed_df.empty:
-            comp_row = computed_df.loc[idx].to_dict()
-            meta_row.update(comp_row)
 
-        for long_title, options in multi_groups.items():
+        # main long rows
+        base_main = {**meta_row,
+                     **(main_comp_df.loc[idx].to_dict()
+                        if not main_comp_df.empty else {})}
+        for long_title, options in main_multi_groups.items():
             for key, norm_col, answer_value in options:
                 if pd.notna(combined.at[idx, norm_col]):
-                    row = meta_row.copy()
-                    row["question"] = long_title
-                    row["answer"] = answer_value
+                    row = base_main.copy()
+                    row["question"]      = long_title
+                    row["answer"]        = answer_value
                     row["question_type"] = "multi_choice"
-                    long_rows.append(row)
+                    long_rows_main.append(row)
 
-    long_df = pd.DataFrame(long_rows)
-    print("Long shape (meta + multi melted):", long_df.shape)
+        # rare long rows
+        base_rare = {**meta_row,
+                     **(rare_comp_df.loc[idx].to_dict()
+                        if not rare_comp_df.empty else {})}
+        for long_title, options in rare_multi_groups.items():
+            for key, norm_col, answer_value in options:
+                if pd.notna(combined.at[idx, norm_col]):
+                    row = base_rare.copy()
+                    row["question"]      = long_title
+                    row["answer"]        = answer_value
+                    row["question_type"] = "multi_choice"
+                    long_rows_rare.append(row)
 
-    return short_df, wide_df, long_df
+    long_main = pd.DataFrame(long_rows_main)
+    long_rare  = pd.DataFrame(long_rows_rare)
+    print(f"\nMain long shape: {long_main.shape}")
+    print(f"Rare  long shape: {long_rare.shape}")
+
+    return short_main, wide_main, long_main, short_rare, wide_rare, long_rare
 
 
 # ============================================================
@@ -819,21 +876,30 @@ def main():
 
     print("All columns and answers mapped. Processing...")
 
-    short_df, wide_df, long_df = process_data(combined, mapping, raw_to_key)
+    short_main, wide_main, long_main, short_rare, wide_rare, long_rare = \
+        process_data(combined, mapping, raw_to_key)
 
-    short_df.to_csv(os.path.join(OUTPUT_DIR, "short_survey.csv"),
-                    index=False, encoding="utf-8-sig")
+    short_main.to_csv(os.path.join(OUTPUT_DIR, "short_survey_main.csv"),
+                      index=False, encoding="utf-8-sig")
+    wide_main.to_csv(os.path.join(OUTPUT_DIR, "wide_survey_main.csv"),
+                     index=False, encoding="utf-8-sig")
+    long_main.to_csv(os.path.join(OUTPUT_DIR, "long_survey_main.csv"),
+                     index=False, encoding="utf-8-sig")
 
-    wide_df.to_csv(os.path.join(OUTPUT_DIR, "wide_survey.csv"),
-                   index=False, encoding="utf-8-sig")
-
-    long_df.to_csv(os.path.join(OUTPUT_DIR, "long_survey.csv"),
-                   index=False, encoding="utf-8-sig")
+    short_rare.to_csv(os.path.join(OUTPUT_DIR, "short_survey_rare.csv"),
+                      index=False, encoding="utf-8-sig")
+    wide_rare.to_csv(os.path.join(OUTPUT_DIR, "wide_survey_rare.csv"),
+                     index=False, encoding="utf-8-sig")
+    long_rare.to_csv(os.path.join(OUTPUT_DIR, "long_survey_rare.csv"),
+                     index=False, encoding="utf-8-sig")
 
     print("\nDone.")
-    print("  short_survey.csv → meta + single-choice + computed columns")
-    print("  wide_survey.csv  → meta + multi-choice (binary) + computed columns")
-    print("  long_survey.csv  → meta + multi-choice (melted) + computed columns")
+    print("  short_survey_main.csv → meta + always/often single-choice + computed")
+    print("  wide_survey_main.csv  → meta + always/often multi-choice (binary) + computed")
+    print("  long_survey_main.csv  → meta + always/often multi-choice (melted) + computed")
+    print("  short_survey_rare.csv → meta + rare single-choice")
+    print("  wide_survey_rare.csv  → meta + rare multi-choice (binary)")
+    print("  long_survey_rare.csv  → meta + rare multi-choice (melted)")
 
 
 if __name__ == "__main__":
