@@ -73,8 +73,8 @@ print(f"Found {len(header_counter)} unique headers (after normalisation)")
 # ── STEP 2: Load known questions from column_rename.xlsx ─────────────────────
 qs = pd.read_excel(RENAME_FILE, sheet_name="questions")
 # Column A = question_raw, Column B = question_short
-known_raw_col = qs.columns[0]
-known_short_col = qs.columns[1]
+known_raw_col = "question_raw"
+known_short_col = "question_short"
 
 known_questions_raw = qs[known_raw_col].dropna().astype(
     str).str.strip().tolist()
