@@ -1,6 +1,10 @@
 """
-Driver Survey Data Processing Pipeline
-=======================================
+Driver Survey Data Processing Pipeline  v2
+==========================================
+Fix vs v1: pass wide_main (not wide_rare) to add_computed_columns() for rare outputs,
+so snapp_incentive_category / tapsi_incentive_category are correctly computed
+instead of silently returning empty strings.
+
 Reads raw weekly survey Excel files, validates columns against a JSON mapping,
 renames headers, recodes answers, and produces six CSV outputs split by question
 frequency (freq field in the mapping JSON):
@@ -611,15 +615,15 @@ def process_data(combined, mapping, raw_to_key):
     # Classify by type AND freq
     #   main → freq: always or often (or unset)
     #   rare → freq: rare
-    meta_keys        = []
+    meta_keys = []
     main_single_keys = []
     rare_single_keys = []
-    main_multi_keys  = []
-    rare_multi_keys  = []
+    main_multi_keys = []
+    rare_multi_keys = []
 
     for key, col in present_keys.items():
         qtype = mapping[key]["type"]
-        freq  = mapping[key].get("freq")
+        freq = mapping[key].get("freq")
         if qtype == "meta":
             if not key.startswith("ignore"):
                 meta_keys.append(key)
@@ -655,7 +659,7 @@ def process_data(combined, mapping, raw_to_key):
         meta_dict["datetime"] = parse_datetime_column(meta_dict["datetime"])
         meta_dict["weeknumber"] = compute_weeknumber(meta_dict["datetime"])
         n_parsed = meta_dict["datetime"].notna().sum()
-        n_total  = len(meta_dict["datetime"])
+        n_total = len(meta_dict["datetime"])
         print(f"\nDatetime parsing: {n_parsed:,} of {n_total:,} parsed "
               f"({n_total - n_parsed:,} unparseable)")
         print(f"Weeknumber computed: {meta_dict['weeknumber'].notna().sum():,} "
@@ -674,7 +678,7 @@ def process_data(combined, mapping, raw_to_key):
     def _recode_single(keys):
         d = {}
         for key in keys:
-            col     = combined[present_keys[key]].copy()
+            col = combined[present_keys[key]].copy()
             answers = mapping[key].get("answers")
             if answers:
                 fuzzy_ans = {fuzzy_normalize(k): v for k, v in answers.items()}
@@ -695,8 +699,8 @@ def process_data(combined, mapping, raw_to_key):
     # same clean row set.
     # ============================================================
 
-    _tmp       = pd.concat([meta_df, pd.DataFrame(all_single_dict)], axis=1)
-    n_before   = len(_tmp)
+    _tmp = pd.concat([meta_df, pd.DataFrame(all_single_dict)], axis=1)
+    n_before = len(_tmp)
     valid_mask = pd.Series(True, index=_tmp.index)
 
     if "tapsi_age" in _tmp.columns and "tapsi_trip_count" in _tmp.columns:
@@ -707,7 +711,7 @@ def process_data(combined, mapping, raw_to_key):
         valid_mask &= ~invalid
 
     combined = combined.loc[valid_mask].reset_index(drop=True)
-    meta_df  = meta_df.loc[valid_mask].reset_index(drop=True)
+    meta_df = meta_df.loc[valid_mask].reset_index(drop=True)
     for key in all_single_dict:
         all_single_dict[key] = (
             all_single_dict[key].loc[valid_mask].reset_index(drop=True)
@@ -725,8 +729,8 @@ def process_data(combined, mapping, raw_to_key):
     def _build_multi_groups(keys):
         groups = defaultdict(list)
         for key in keys:
-            long_title   = mapping[key]["long"]
-            answers      = mapping[key].get("answers", {})
+            long_title = mapping[key]["long"]
+            answers = mapping[key].get("answers", {})
             answer_value = list(answers.values())[0] if answers else key
             groups[long_title].append((key, present_keys[key], answer_value))
         return groups
@@ -735,7 +739,7 @@ def process_data(combined, mapping, raw_to_key):
         cols = {}
         for long_title, options in multi_groups_dict.items():
             for key, norm_col, answer_value in options:
-                col_name      = f"{long_title}__{answer_value}"
+                col_name = f"{long_title}__{answer_value}"
                 cols[col_name] = combined[norm_col].notna().astype(int)
         if cols:
             return pd.concat([meta_df, pd.DataFrame(cols)], axis=1)
@@ -775,7 +779,8 @@ def process_data(combined, mapping, raw_to_key):
     wide_rare = _build_wide(rare_multi_groups)
     print(f"Rare wide shape (meta + multi binary): {wide_rare.shape}")
 
-    short_rare = add_computed_columns(short_rare, wide_rare)
+    # fix: use wide_main so incentive_category binary cols are available
+    short_rare = add_computed_columns(short_rare, wide_main)
     rare_computed_cols = [
         c for c in short_rare.columns
         if c not in meta_df.columns and c not in rare_single_dict
@@ -810,8 +815,8 @@ def process_data(combined, mapping, raw_to_key):
             for key, norm_col, answer_value in options:
                 if pd.notna(combined.at[idx, norm_col]):
                     row = base_main.copy()
-                    row["question"]      = long_title
-                    row["answer"]        = answer_value
+                    row["question"] = long_title
+                    row["answer"] = answer_value
                     row["question_type"] = "multi_choice"
                     long_rows_main.append(row)
 
@@ -823,13 +828,13 @@ def process_data(combined, mapping, raw_to_key):
             for key, norm_col, answer_value in options:
                 if pd.notna(combined.at[idx, norm_col]):
                     row = base_rare.copy()
-                    row["question"]      = long_title
-                    row["answer"]        = answer_value
+                    row["question"] = long_title
+                    row["answer"] = answer_value
                     row["question_type"] = "multi_choice"
                     long_rows_rare.append(row)
 
     long_main = pd.DataFrame(long_rows_main)
-    long_rare  = pd.DataFrame(long_rows_rare)
+    long_rare = pd.DataFrame(long_rows_rare)
     print(f"\nMain long shape: {long_main.shape}")
     print(f"Rare  long shape: {long_rare.shape}")
 
