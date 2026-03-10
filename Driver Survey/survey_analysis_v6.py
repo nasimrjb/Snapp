@@ -808,10 +808,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
                   "Not Available": "Snapp Incentive Unsatisfaction__No Available Time",
                   "Non Payment": "Snapp Incentive Unsatisfaction__Non Payment"},
         "Tapsi": {"Improper Amount": "Tapsi Incentive Unsatisfaction__Improper Amount",
-                  "Difficult": "Tapsi Incentive Unsatisfaction__Difficult to do",
-                  "Not Enough Time": "Tapsi Incentive Unsatisfaction__not enough time  to do",
-                  "No Time": "Tapsi Incentive Unsatisfaction__I didn't have time to do it",
-                  "Non Payment": "Tapsi Incentive Unsatisfaction__Non Payment/delay"},
+                  "Difficult": "Tapsi Incentive Unsatisfaction__difficult",
+                  "No Time": "Tapsi Incentive Unsatisfaction__No Time todo",
+                  "Not Available": "Tapsi Incentive Unsatisfaction__Not Available",
+                  "Non Payment": "Tapsi Incentive Unsatisfaction__Non Payment"},
     }
     fig, axes = plt.subplots(1, 2, figsize=(
         14, 5), facecolor=BG_COLOR, sharey=True)
