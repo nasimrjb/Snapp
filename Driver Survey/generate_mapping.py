@@ -33,6 +33,12 @@ def generate_mapping(xlsx_path=XLSX_PATH, json_path=JSON_PATH):
         raw_freq = str(replaced.iloc[i]["question_freq"]) if pd.notna(
             replaced.iloc[i]["question_freq"]) else None
 
+        # Read section from the questions sheet
+        raw_section = str(questions.iloc[i]["section"]) if (
+            "section" in questions.columns and pd.notna(
+                questions.iloc[i].get("section"))
+        ) else None
+
         answers = {}
         for ac in answer_cols:
             qv = questions.iloc[i].get(ac)
@@ -47,6 +53,7 @@ def generate_mapping(xlsx_path=XLSX_PATH, json_path=JSON_PATH):
                 "type": QTYPE_MAP.get(raw_qtype, raw_qtype),
                 "freq": FREQ_MAP.get(raw_freq, raw_freq),
                 "dtype": DTYPE_MAP.get(raw_dtype, raw_dtype),
+                "section": raw_section,
                 "answers": answers or None,
             }
         else:
@@ -57,6 +64,9 @@ def generate_mapping(xlsx_path=XLSX_PATH, json_path=JSON_PATH):
                     result[key]["answers"].update(answers)
                 else:
                     result[key]["answers"] = answers
+            # If section was null on first encounter but set on duplicate, fill it
+            if raw_section and not result[key].get("section"):
+                result[key]["section"] = raw_section
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
@@ -64,6 +74,13 @@ def generate_mapping(xlsx_path=XLSX_PATH, json_path=JSON_PATH):
     print(f"Generated {json_path}")
     print(
         f"  {len(result)} questions, {sum(1 for v in result.values() if v['answers'])} with answer mappings")
+
+    # Section summary
+    from collections import Counter
+    sec_counts = Counter(v.get("section") for v in result.values())
+    print(f"  {len(sec_counts)} sections:")
+    for sec, cnt in sec_counts.most_common():
+        print(f"    {sec}: {cnt}")
 
 
 if __name__ == "__main__":
