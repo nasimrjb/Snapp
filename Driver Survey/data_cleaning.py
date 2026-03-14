@@ -18,7 +18,7 @@ What this script does:
          - short_survey_main.csv  -- one row per respondent, single-choice
                                      questions asked always/often + computed cols
          - wide_survey_main.csv   -- one row per respondent, multi-choice
-                                     questions (binary 0/1 columns) + computed cols 
+                                     questions (binary 0/1 columns) + computed cols
          - long_survey_main.csv   -- one row per (respondent x selected answer),
                                      multi-choice questions melted into long format
          - short_survey_rare.csv  -- same as short_main but for rare questions
@@ -46,8 +46,7 @@ import re
 import unicodedata
 import numpy as np
 import pandas as pd
-# defaultdict: a dict that auto-creates missing keys with a default value
-from collections import defaultdict
+from collections import defaultdict  # defaultdict: a dict that auto-creates missing keys with a default value
 
 # ============================================================
 # CONFIGURATION — paths to raw data, mapping file, and output folder
@@ -719,7 +718,7 @@ def add_computed_columns(short_df, wide_df):
         "750k_1m": 8_750_000,    # 750k-1m Tomans → 875k midpoint
         "800k_1m": 9_000_000,    # 800k-1m Tomans → 900k midpoint
         "1m_1.25m": 11_250_000,  # 1-1.25m Tomans → 1.125m midpoint
-        "1.25m_1.5m": 13_750_000,  # 1.25-1.5m Tomans → 1.375m midpoint
+        "1.25m_1.5m": 13_750_000, # 1.25-1.5m Tomans → 1.375m midpoint
         ">1m": 12_500_000,       # >1m Tomans → 1.25m estimate
         ">1.5m": 17_500_000,     # >1.5m Tomans → 1.75m estimate
     }
@@ -1045,8 +1044,15 @@ def process_data(combined, mapping, raw_to_key):
     valid_mask = pd.Series(True, index=_tmp.index)
 
     if "tapsi_age" in _tmp.columns and "tapsi_trip_count" in _tmp.columns:
+        # BUG FIX: The old condition `tapsi_trip_count != "0"` also matched
+        # NaN values (because NaN != anything is True in pandas), which
+        # accidentally dropped ~140k exclusive-Snapp drivers whose trip count
+        # was blank (they never registered on Tapsi, so the question was
+        # skipped).  The fix adds a notna() check so only rows with an
+        # *explicit* non-zero trip count are considered contradictory.
         invalid = (
             (_tmp["tapsi_age"] == "Not Registered") &
+            (_tmp["tapsi_trip_count"].notna()) &
             (_tmp["tapsi_trip_count"] != "0")
         )
         valid_mask &= ~invalid  # Keep rows that are NOT invalid
@@ -1321,12 +1327,12 @@ def main():
                      index=False, encoding="utf-8-sig")
 
     print("\nDone.")
-    print("  short_survey_main.csv → meta + always/often single-choice + computed")
-    print("  wide_survey_main.csv  → meta + always/often multi-choice (binary) + computed")
-    print("  long_survey_main.csv  → meta + always/often multi-choice (melted) + computed")
-    print("  short_survey_rare.csv → meta + rare single-choice")
-    print("  wide_survey_rare.csv  → meta + rare multi-choice (binary)")
-    print("  long_survey_rare.csv  → meta + rare multi-choice (melted)")
+    print("  short_survey_main.csv -> meta + always/often single-choice + computed")
+    print("  wide_survey_main.csv  -> meta + always/often multi-choice (binary) + computed")
+    print("  long_survey_main.csv  -> meta + always/often multi-choice (melted) + computed")
+    print("  short_survey_rare.csv -> meta + rare single-choice")
+    print("  wide_survey_rare.csv  -> meta + rare multi-choice (binary)")
+    print("  long_survey_rare.csv  -> meta + rare multi-choice (melted)")
 
 
 if __name__ == "__main__":
