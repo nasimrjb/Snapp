@@ -125,16 +125,23 @@ Usage:
 # PdfPages lets us write multiple matplotlib figures into a single PDF file,
 # where each figure becomes one page.  This is how we build the 74-page report.
 from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.ticker as mticker         # Custom axis tick formatting (e.g., percentage labels)
-import matplotlib.gridspec as gridspec       # Flexible grid layouts for complex multi-panel pages
-import matplotlib.pyplot as plt              # Core plotting API for creating figures and axes
-import matplotlib.patches as mpatches        # Manual legend entries (colored patches)
-import matplotlib.patheffects as pe          # Text outline/shadow effects (imported for potential use)
+# Custom axis tick formatting (e.g., percentage labels)
+import matplotlib.ticker as mticker
+# Flexible grid layouts for complex multi-panel pages
+import matplotlib.gridspec as gridspec
+# Core plotting API for creating figures and axes
+import matplotlib.pyplot as plt
+# Manual legend entries (colored patches)
+import matplotlib.patches as mpatches
+# Text outline/shadow effects (imported for potential use)
+import matplotlib.patheffects as pe
 import os
 import sys
 import warnings
-import numpy as np                           # Numeric operations: NaN, arange, where, etc.
-import pandas as pd                          # Data loading (read_csv), groupby, merge, value_counts
+# Numeric operations: NaN, arange, where, etc.
+import numpy as np
+# Data loading (read_csv), groupby, merge, value_counts
+import pandas as pd
 
 # "Agg" is a non-interactive backend -- it renders to files (PNG, PDF) without
 # opening a window.  This is essential for server/CI environments or when we
@@ -153,10 +160,10 @@ warnings.filterwarnings("ignore")
 BASE = r"D:\Work\Driver Survey\processed"
 SHORT_MAIN = os.path.join(BASE, "short_survey_main.csv")
 SHORT_RARE = os.path.join(BASE, "short_survey_rare.csv")
-WIDE_MAIN  = os.path.join(BASE, "wide_survey_main.csv")
-WIDE_RARE  = os.path.join(BASE, "wide_survey_rare.csv")
-LONG_MAIN  = os.path.join(BASE, "long_survey_main.csv")
-LONG_RARE  = os.path.join(BASE, "long_survey_rare.csv")
+WIDE_MAIN = os.path.join(BASE, "wide_survey_main.csv")
+WIDE_RARE = os.path.join(BASE, "wide_survey_rare.csv")
+LONG_MAIN = os.path.join(BASE, "long_survey_main.csv")
+LONG_RARE = os.path.join(BASE, "long_survey_rare.csv")
 OUTPUT_PDF = os.path.join(BASE, "driver_survey_analysis_v6.pdf")
 
 # Color palette: Snapp = green, Tapsi = orange -- these are the official brand
@@ -378,17 +385,17 @@ def merge_main_rare(main_df, rare_df, key="recordID"):
 print("Loading data files...")
 short_main = safe_load(SHORT_MAIN)
 short_rare = safe_load(SHORT_RARE)
-wide_main  = safe_load(WIDE_MAIN)
-wide_rare  = safe_load(WIDE_RARE)
-long_main  = safe_load(LONG_MAIN)
-long_rare  = safe_load(LONG_RARE)
+wide_main = safe_load(WIDE_MAIN)
+wide_rare = safe_load(WIDE_RARE)
+long_main = safe_load(LONG_MAIN)
+long_rare = safe_load(LONG_RARE)
 
 # --- Merge main + rare DataFrames ---
 # For "short" and "wide" shapes, main and rare share the same recordID but
 # have different columns.  We LEFT JOIN rare onto main so every driver row
 # gets both the always-asked and rarely-asked columns in one DataFrame.
 short = merge_main_rare(short_main, short_rare)
-wide  = merge_main_rare(wide_main, wide_rare)
+wide = merge_main_rare(wide_main, wide_rare)
 
 # For "long" format, main and rare have the same columns (recordID, question,
 # answer) but different rows.  We simply stack (concatenate) them vertically.
@@ -497,21 +504,13 @@ for _c in _ensure:
     if _c not in short.columns:
         short[_c] = np.nan
 
-# --- Filter: drop rows missing snapp_age ---
-# snapp_age (tenure bucket like "<3 months", "1-3 years") is used as a key
-# segmentation variable in many charts.  Rows without it are unusable.
-if "snapp_age" in short.columns:
-    before = len(short)
-    short = short[short["snapp_age"].notna() & (short["snapp_age"] != "")].copy()
-    dropped_age = before - len(short)
-    if dropped_age > 0:
-        print(f"Dropped {dropped_age} records with missing snapp_age")
 
 # --- Sync wide and long to valid recordIDs ---
 # After filtering short (dropping missing snapp_age), some recordIDs have been
 # removed.  We filter wide and long to match, so all three DataFrames describe
 # the exact same set of survey respondents.
-valid_ids = set(short["recordID"].unique()) if "recordID" in short.columns else set()
+valid_ids = set(short["recordID"].unique()
+                ) if "recordID" in short.columns else set()
 if wide is not None and "recordID" in wide.columns:
     wide = wide[wide["recordID"].isin(valid_ids)].copy()
 if long is not None and "recordID" in long.columns:
@@ -623,7 +622,6 @@ print(f"HAVE_SHORT={HAVE_SHORT}, HAVE_WIDE={HAVE_WIDE}, HAVE_LONG={HAVE_LONG}")
 # so that page numbering stays consistent across different survey waves.
 # ============================================================================
 with PdfPages(OUTPUT_PDF) as pdf:
-
 
     # ================================================================
     # PAGE 1 – COVER / KEY KPI SUMMARY
@@ -2970,7 +2968,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
             pct = (f" ({v/total_resp_tg*100:.0f}%)"
                    if total_resp_tg > 0 else "")
             ax.text(b.get_x() + b.get_width() / 2,
-                    v + max(funnel_vals_tg) * 0.02 if max(funnel_vals_tg) > 0 else 1,
+                    v + max(funnel_vals_tg) *
+                    0.02 if max(funnel_vals_tg) > 0 else 1,
                     f"{v:,}{pct}", ha="center", fontsize=9, fontweight="bold")
         ax.set_title(f"Adoption Funnel  (n={total_resp_tg:,})", fontsize=11)
         ax.set_ylabel("Count (Yes)")
