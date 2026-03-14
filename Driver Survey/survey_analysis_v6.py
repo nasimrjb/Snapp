@@ -1,106 +1,155 @@
 """
 Driver Survey -- Visual Analysis v6
 ====================================
-Reads the 6 processed CSV files produced by data_cleaning.py and produces
-a multi-page PDF report with charts and tables.
+This is Step 3 (the final step) of the Driver Survey ETL pipeline:
+
+    1. generate_mapping.py   --> generates column_rename_mapping.json from raw Excel
+    2. data_cleaning.py      --> reads raw data, produces 6 processed CSV files
+    3. survey_analysis_v6.py --> (THIS FILE) reads those 6 CSVs, produces a PDF report
+
+Purpose:
+    Generates a 74-page PDF report containing bar charts, line trends, pie charts,
+    scatter plots, funnels, and cross-tabs that visualize driver satisfaction survey
+    results for the Snapp and Tapsi rideshare platforms (Iran market).
+
+Input Files (all in processed/ directory):
+    The 6 CSVs come in (main, rare) pairs for three "shapes" of data:
+    - short_survey_main.csv  -- one row per driver, always/often asked single-choice questions
+    - short_survey_rare.csv  -- one row per driver, rarely asked single-choice questions
+    - wide_survey_main.csv   -- one row per driver, always/often multi-choice as binary columns
+    - wide_survey_rare.csv   -- one row per driver, rarely asked multi-choice as binary columns
+    - long_survey_main.csv   -- melted rows (question, answer), always/often multi-choice
+    - long_survey_rare.csv   -- melted rows (question, answer), rarely asked multi-choice
+
+    "short" = single-choice answers stored as one column per question.
+    "wide"  = multi-choice answers one-hot-encoded (each choice becomes a 0/1 column).
+    "long"  = multi-choice answers melted into (question, answer) rows for easy groupby.
+
+    At load time, main+rare pairs are merged (short, wide) or concatenated (long)
+    so that all columns are available in a single DataFrame per shape.
+
+Output:
+    driver_survey_analysis_v6.pdf -- multi-page PDF containing 74 chart pages.
+
+Key Libraries Used:
+    - pandas (pd)           : data loading, grouping, aggregation, and manipulation
+    - numpy (np)            : numeric operations (NaN handling, array math)
+    - matplotlib (plt)      : all chart rendering (bar, line, pie, scatter, hist)
+    - matplotlib.backends.backend_pdf.PdfPages : writes multiple figures into one PDF
+    - matplotlib.gridspec   : advanced subplot layouts (e.g., uneven grid on page 69)
+    - matplotlib.patches    : custom legend entries (colored rectangles)
+    - matplotlib.ticker     : axis tick formatting
+    - matplotlib.patheffects: text outline effects (imported but not currently used)
 
 Pages
 -----
 PAGE  1: Cover / Key KPI Summary
-PAGE  2: Overall Satisfaction (Snapp vs Tapsi) -- histograms
-PAGE  3: NPS (Recommend Score) Snapp vs Tapsi
-PAGE  4: Satisfaction Trend by Week (Fare / Income / Request Count)
-PAGE  5: Satisfaction by Tenure Group
-PAGE  6: Satisfaction by Cooperation Type (Full-Time vs Part-Time)
-PAGE  7: Satisfaction by City (top 10)
-PAGE  8: Satisfaction by Driver Type (Joint vs Snapp-Exclusive)
-PAGE  9: Weekly Response Volume + Tenure Breakdown
-PAGE 10: City Distribution (top 15)
-PAGE 11: Cooperation Type & Driver Type Proportions
-PAGE 12: Snapp Age Distribution
-PAGE 13: Tapsi Age Distribution
-PAGE 14: Income Distribution (Snapp vs Tapsi)
-PAGE 15: Ride Count Distribution (Snapp vs Tapsi)
-PAGE 16: Incentive Distribution (Snapp vs Tapsi)
-PAGE 17: Commission Rate Distribution (Snapp vs Tapsi)
-PAGE 18: Fare Satisfaction by Income Quartile
-PAGE 19: Income Satisfaction by Ride-Count Quartile
-PAGE 20: Incentive Satisfaction (Snapp vs Tapsi)
-PAGE 21: EcoPlus Familiarity & Access/Usage
-PAGE 22: EcoPlus Participation Feeling & Reasons for Not Talking
-PAGE 23: Demand & Missed-Demand Distribution
-PAGE 24: Max Demand Satisfaction
-PAGE 25: Navigation App Recommendation (Google Maps / Waze / Neshan / Balad)
-PAGE 26: Snapp App Navigation Satisfaction
-PAGE 27: CS Contact Rate (Snapp vs Tapsi)
-PAGE 28: CS Satisfaction Overall (Snapp vs Tapsi)
-PAGE 29: CS Satisfaction Breakdown (Wait-Time, Solution, Behaviour, Relevance)
-PAGE 30: CS Most Important Reason (Snapp vs Tapsi)
-PAGE 31: CS Solved (Snapp vs Tapsi)
-PAGE 32: GPS Stage (Snapp vs Tapsi)
-PAGE 33: GPS Glitch -- When Does It Happen (binary cols from wide)
-PAGE 34: GPS Glitch -- What Do Drivers Do (binary cols from wide)
-PAGE 35: Snapp App Support Unsatisfaction Reasons (binary cols from wide)
-PAGE 36: Tapsi App Support Unsatisfaction Reasons (binary cols from wide)
-PAGE 37: Ride Refusal Reasons -- Snapp (binary cols from wide)
-PAGE 38: Ride Refusal Reasons -- Tapsi (binary cols from wide)
-PAGE 39: Better Income Suggestions (Snapp vs Tapsi)
-PAGE 40: Commission Info (Snapp vs Tapsi)
-PAGE 41: Tax Info (Snapp vs Tapsi)
-PAGE 42: Collaboration Reason (Snapp vs Tapsi)
-PAGE 43: Registration Type & Main Reason (Snapp vs Tapsi)
-PAGE 44: Refer Others (Snapp vs Tapsi)
-PAGE 45: Unpaid Fare Follow-up (Snapp vs Tapsi)
-PAGE 46: Compensate Unpaid by Passenger (Snapp vs Tapsi)
-PAGE 47: Satisfaction Follow-up Overall (Snapp vs Tapsi)
-PAGE 48: Satisfaction Follow-up Time (Snapp vs Tapsi)
-PAGE 49: Accepted Trip Length Preference (Snapp vs Tapsi)
-PAGE 50: CS Category Deep-Dive -- Snapp (long_rare)
-PAGE 51: CS Category Deep-Dive -- Tapsi (long_rare)
-PAGE 52: Navigation Familiarity / Installed / Used (long_rare)
-PAGE 53: Snapp Incentive Type (long_main)
-PAGE 54: Snapp Got-Bonus & Unsatisfaction (long_main)
-PAGE 55: Incentive Full Funnel (notification -> participation) Snapp vs Tapsi
-PAGE 56: Incentive Time Window Snapp vs Tapsi (how long active)
-PAGE 57: Tapsi Re-activation Timing (dormancy before incentive response)
-PAGE 58: App-Level NPS vs Platform NPS (refer_others vs recommend)
+PAGE  2: Weekly Response Count (bar chart of responses per year-week)
+PAGE  3: Demographics Overview (age, education, cooperation, marital status)
+PAGE  4: Primary Occupation Breakdown (top 15 jobs)
+PAGE  5: Active Joint (Tapsi) Rate by Year-Week
+PAGE  6: Average Weekly Ride Count (Snapp vs Tapsi trend)
+PAGE  7: Satisfaction Comparison (Fare / Income / Request Count)
+PAGE  8: Overall Satisfaction Distribution (histograms)
+PAGE  9: NPS by Year-Week (Net Promoter Score trend)
+PAGE 10: Incentive Category Distribution
+PAGE 11: Incentive Type Usage (wide binary columns)
+PAGE 12: Incentive Unsatisfaction Reasons (wide binary columns)
+PAGE 13: Average Monetary Incentive by Year-Week (trend)
+PAGE 14: Incentive Satisfaction Distribution (1-5 scale)
+PAGE 15: Length of Cooperation Distribution (months histogram)
+PAGE 16: Ride Refusal Reasons (Snapp vs Tapsi, wide binary)
+PAGE 17: Customer Support Ticket Categories (wide binary)
+PAGE 18: Navigation App Adoption Funnel (long survey)
+PAGE 19: Navigation App Ratings (0-10 scale)
+PAGE 20: GPS Failure Stage Distribution
+PAGE 21: GPS Glitch Time of Day (wide binary)
+PAGE 22: GPS Glitch Driver Actions (wide binary)
+PAGE 23: Commission & Tax Transparency
+PAGE 24: Unpaid Fares -- Incident Rate & Compensation
+PAGE 25: Customer Support Channel Usage
+PAGE 26: Customer Support Quality Deep Dive
+PAGE 27: Collaboration Reasons
+PAGE 28: Income Source Preference
+PAGE 29: Satisfaction by Year-Week (trend lines)
+PAGE 30: Satisfaction by Cooperation Type
+PAGE 31: Satisfaction by City (top 10)
+PAGE 32: Satisfaction by Driver Type (Joint vs Exclusive)
+PAGE 33: Honeymoon Effect (satisfaction decline with tenure)
+PAGE 34: Satisfaction by Age Group
+PAGE 35: Satisfaction by Driver Engagement Level (active time)
+PAGE 36: Satisfaction by Primary Occupation
+PAGE 37: Tapsi Carpooling Deep-Dive
+PAGE 38: Feature Adoption (EcoPlus & Magical Window)
+PAGE 39: Driver Privacy & Participation Attitudes
+PAGE 40: Demand & Supply Metrics
+PAGE 41: Commission-Free Rides vs Total Rides (scatter)
+PAGE 42: Top 15 Cities by Response Count
+PAGE 43: City-Level Satisfaction Comparison
+PAGE 44: Registration & Referral Analysis
+PAGE 45-47: Long Survey Multi-Choice Pages (Incentive Type, GotBonus, CS Category)
+PAGE 48: Snapp Navigation Issues (long survey)
+PAGE 49: Decline Reason & App Menu Usage (long survey)
+PAGE 50: Tapsi-Only Questions (long survey)
+PAGE 51-52: CS Category by Driver Type (long survey, Snapp & Tapsi)
+PAGE 53: App Usage & EcoPlus Refusal (long survey)
+PAGE 54: Joint vs Snapp Exclusive Key Metrics
+PAGE 55: Incentive Full Funnel (notification -> participation)
+PAGE 56: Incentive Active Duration
+PAGE 57: Tapsi Re-activation Timing
+PAGE 58: App NPS vs Platform NPS
 PAGE 59: Commission Knowledge x Satisfaction cross-tab
-PAGE 60: Unpaid Fare Follow-up Satisfaction (Snapp vs Tapsi)
-PAGE 61: Trip Length Preference by Platform
-PAGE 62: Navigation Actually Used in Last Trip (Snapp vs Tapsi)
-PAGE 63: Joining Bonus / Registration Origin (snapp_joining_bonus vs tapsi_joining_bonus)
-PAGE 64: Tapsi In-App & Offline Navigation Deep-Dive
-PAGE 65: Tapsi Magical Window Income + Referral Program
+PAGE 60: Unpaid Fare Follow-up Satisfaction
+PAGE 61: Trip Length Preference
+PAGE 62: Navigation Used in Last Trip
+PAGE 63: Joining Bonus & Registration Origin
+PAGE 64: Tapsi Navigation Deep-Dive
+PAGE 65: Tapsi GPS Performance & Magical Window
 PAGE 66: Speed Satisfaction (Snapp vs Tapsi)
-PAGE 67: CarFix (Snapp) -- Familiarity / Usage / Recommend / Satisfaction Breakdown
-PAGE 68: Garage (Tapsi) -- Familiarity / Usage / Recommend / Satisfaction Breakdown
-PAGE 69: Mixed Incentive -- Familiarity / Trip Effect / Snapp-Only / Choice
-PAGE 70: Request Refusal Reasons (from wide)
-PAGE 71: App Notifications -- Snapp vs Tapsi (from wide)
-PAGE 72: Fix Location + OS Distribution
-PAGE 73: Incentive Rules + Preference
-PAGE 74: Next-Week Usage + Rate Passenger Familiarity
+PAGE 67: Snapp CarFix Deep-Dive (funnel, satisfaction, recommendation)
+PAGE 68: Tapsi Garage Deep-Dive (funnel, satisfaction, recommendation)
+PAGE 69: Mixed Incentive Strategy (awareness, activation, preferences)
+PAGE 70: Request Refusal Reasons (wide binary)
+PAGE 71: App Notification Channels (wide binary)
+PAGE 72: Fix Location Feature & OS Distribution
+PAGE 73: Incentive Rules Awareness & Preference
+PAGE 74: Next-Week Usage Intent & Rate Passenger Feature
 
 Usage:
     python survey_analysis_v6.py
 """
 
+# ============================================================================
+# IMPORTS
+# ============================================================================
+# PdfPages lets us write multiple matplotlib figures into a single PDF file,
+# where each figure becomes one page.  This is how we build the 74-page report.
 from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.ticker as mticker
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.patheffects as pe
+import matplotlib.ticker as mticker         # Custom axis tick formatting (e.g., percentage labels)
+import matplotlib.gridspec as gridspec       # Flexible grid layouts for complex multi-panel pages
+import matplotlib.pyplot as plt              # Core plotting API for creating figures and axes
+import matplotlib.patches as mpatches        # Manual legend entries (colored patches)
+import matplotlib.patheffects as pe          # Text outline/shadow effects (imported for potential use)
 import os
 import sys
 import warnings
-import numpy as np
-import pandas as pd
-import matplotlib
+import numpy as np                           # Numeric operations: NaN, arange, where, etc.
+import pandas as pd                          # Data loading (read_csv), groupby, merge, value_counts
+
+# "Agg" is a non-interactive backend -- it renders to files (PNG, PDF) without
+# opening a window.  This is essential for server/CI environments or when we
+# just want to write a PDF and exit.
 matplotlib.use("Agg")
+
+# Suppress matplotlib deprecation warnings and pandas SettingWithCopyWarning
+# to keep console output clean.  Data issues are handled via explicit checks.
 warnings.filterwarnings("ignore")
 
-# -- Configuration ---------------------------------------------------------------
+# ============================================================================
+# CONFIGURATION -- File paths, color palette, and thresholds
+# ============================================================================
+# BASE points to the "processed/" folder where data_cleaning.py writes its
+# output CSVs.  All 6 input files and the output PDF live here.
 BASE = r"D:\Work\Driver Survey\processed"
 SHORT_MAIN = os.path.join(BASE, "short_survey_main.csv")
 SHORT_RARE = os.path.join(BASE, "short_survey_rare.csv")
@@ -110,19 +159,36 @@ LONG_MAIN  = os.path.join(BASE, "long_survey_main.csv")
 LONG_RARE  = os.path.join(BASE, "long_survey_rare.csv")
 OUTPUT_PDF = os.path.join(BASE, "driver_survey_analysis_v6.pdf")
 
-SNAPP_COLOR = "#00C853"
-TAPSI_COLOR = "#FF6D00"
-ACCENT = "#1565C0"
-ACCENT2 = "#7B1FA2"
-GREY = "#9E9E9E"
-LGREY = "#E0E0E0"
-BG_COLOR = "#FAFAFA"
+# Color palette: Snapp = green, Tapsi = orange -- these are the official brand
+# colors for Iran's two main rideshare platforms.  ACCENT/ACCENT2 are used for
+# neutral or third-party data (e.g., navigation apps).  BG_COLOR gives every
+# page a consistent light-grey background instead of pure white.
+SNAPP_COLOR = "#00C853"          # Snapp brand green
+TAPSI_COLOR = "#FF6D00"          # Tapsi brand orange
+ACCENT = "#1565C0"               # Blue -- used for neutral / third-party data
+ACCENT2 = "#7B1FA2"              # Purple -- secondary accent
+GREY = "#9E9E9E"                 # Medium grey -- text labels and axis elements
+LGREY = "#E0E0E0"               # Light grey -- "no data" or least important bars
+BG_COLOR = "#FAFAFA"             # Near-white background for all figures
 PLATFORM_COLORS = {"Snapp": SNAPP_COLOR, "Tapsi": TAPSI_COLOR}
+
+# Minimum number of survey responses a week must have to be included in the
+# analysis.  Weeks with fewer responses are dropped because small samples
+# produce noisy, misleading averages in the weekly trend charts.
 MIN_WEEK_RESPONSES = 100
 
-# -- Helpers ---------------------------------------------------------------------
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+# These small utility functions are called many times throughout the 74-page
+# PDF generation.  They reduce code duplication for common tasks like creating
+# a figure, labeling bars, saving a page, and styling axes.
+# ============================================================================
 
 
+# Create a new matplotlib Figure + single Axes with a consistent background
+# color and bold title.  Most single-chart pages start with this call.
+# Returns (fig, ax) so the caller can draw on the axes and then call save_fig.
 def new_fig(title, figsize=(12, 6)):
     fig, ax = plt.subplots(figsize=figsize, facecolor=BG_COLOR)
     ax.set_facecolor(BG_COLOR)
@@ -130,6 +196,9 @@ def new_fig(title, figsize=(12, 6)):
     return fig, ax
 
 
+# Add numeric labels on top of every bar in a bar chart.
+# Iterates over all bar "containers" (one per call to ax.bar) and places
+# the bar height value as text above each bar.  Skips zero-height bars.
 def bar_label(ax, fmt="{:.0f}"):
     for container in ax.containers:
         labels = [fmt.format(v.get_height()) if v.get_height()
@@ -137,12 +206,21 @@ def bar_label(ax, fmt="{:.0f}"):
         ax.bar_label(container, labels=labels, fontsize=8, padding=2)
 
 
+# Finalize a figure and write it as the next page in the PDF.
+# tight_layout(rect=...) adjusts spacing so the suptitle (y=0.97) does not
+# overlap the subplots.  plt.close(fig) frees memory -- without this,
+# hundreds of open figures would accumulate and crash the script.
 def save_fig(pdf, fig):
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     pdf.savefig(fig, facecolor=BG_COLOR)
     plt.close(fig)
 
 
+# Calculate the Net Promoter Score (NPS) for a series of 0-10 ratings.
+# NPS = % Promoters (score 9-10) minus % Detractors (score 0-6).
+# Scores of 7-8 are "Passives" and do not count either way.
+# NPS ranges from -100 (all detractors) to +100 (all promoters).
+# A positive NPS means more people would recommend than not.
 def nps_score(series):
     s = series.dropna()
     if len(s) == 0:
@@ -150,11 +228,26 @@ def nps_score(series):
     return (s >= 9).sum() / len(s) * 100 - (s <= 6).sum() / len(s) * 100
 
 
+# Apply a clean, minimal style to an axes: light background and remove the
+# top/right spines (border lines).  Called on virtually every axes in the
+# report for visual consistency.
 def style_ax(ax):
     ax.set_facecolor(BG_COLOR)
     ax.spines[["top", "right"]].set_visible(False)
 
 
+# Reusable charting function: creates a 3-panel side-by-side bar chart page
+# comparing Snapp vs Tapsi mean satisfaction across groups of drivers.
+# The 3 panels correspond to the 3 SAT_PAIRS: Fare, Income, and Request Count.
+#
+# Parameters:
+#   groupcol       - column to group by (e.g., "city", "cooperation_type")
+#   top_n          - if set, only keep the N groups with the most responses
+#   min_group_size - drop groups with fewer than this many responses
+#   order          - if given, display groups in this specific order
+#
+# This function is called for Pages 30-32 and 34 (by cooperation type, city,
+# driver type, and age group) to avoid repeating ~30 lines of code each time.
 def plot_sat_by_group(pdf, df, groupcol, title_suffix, figsize=(14, 6),
                       top_n=None, min_group_size=10, order=None):
     grp_sizes = df.groupby(groupcol).size()
@@ -198,6 +291,11 @@ def plot_sat_by_group(pdf, df, groupcol, title_suffix, figsize=(14, 6),
     save_fig(pdf, fig)
 
 
+# Reusable charting function for long-format survey data: creates a 2-panel
+# horizontal bar chart comparing answer distributions for a Snapp question
+# vs its Tapsi equivalent.  Filters long_df where question == snapp_question
+# or tapsi_question, then counts each unique answer value.
+# Used for Pages 45-47 (Incentive Type, GotBonus, CS Category from long survey).
 def plot_long_snapp_vs_tapsi(pdf, long_df, snapp_question, tapsi_question, title, figsize=(14, 6)):
     fig, axes = plt.subplots(1, 2, figsize=figsize,
                              facecolor=BG_COLOR, sharey=True)
@@ -226,6 +324,9 @@ def plot_long_snapp_vs_tapsi(pdf, long_df, snapp_question, tapsi_question, title
     save_fig(pdf, fig)
 
 
+# Create a placeholder PDF page when data for a chart is unavailable.
+# Shows a centered grey warning box with the reason text.  This keeps the
+# page numbering consistent even when certain survey questions were not asked.
 def placeholder_page(pdf, title, reason="Data not available"):
     """Create a page with centered warning text when data is missing."""
     fig, ax = plt.subplots(figsize=(12, 6), facecolor=BG_COLOR)
@@ -241,6 +342,9 @@ def placeholder_page(pdf, title, reason="Data not available"):
     save_fig(pdf, fig)
 
 
+# Safely load a CSV file, returning None (instead of crashing) if the file
+# is missing.  Uses utf-8-sig encoding because data_cleaning.py writes CSVs
+# with a BOM (byte order mark), which utf-8-sig strips automatically.
 def safe_load(path):
     """Return pd.read_csv(path) or None if the file does not exist."""
     if not os.path.isfile(path):
@@ -249,6 +353,11 @@ def safe_load(path):
     return pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
 
 
+# Merge a "main" DataFrame with its corresponding "rare" DataFrame using a
+# left join on recordID.  Only brings in columns from rare that are NOT
+# already in main (to avoid duplicate column name conflicts).
+# This is how we combine always-asked and rarely-asked questions into one
+# unified DataFrame for each shape (short, wide).
 def merge_main_rare(main_df, rare_df, key="recordID"):
     """Left-join rare columns into main, keeping only non-duplicate columns from rare."""
     if main_df is None:
@@ -261,7 +370,11 @@ def merge_main_rare(main_df, rare_df, key="recordID"):
     return main_df.merge(rare_df[rare_extra], on=key, how="left")
 
 
-# -- Load data -------------------------------------------------------------------
+# ============================================================================
+# DATA LOADING
+# ============================================================================
+# Load all 6 CSV files.  Each may be None if the file is missing (safe_load
+# prints a warning and returns None instead of crashing).
 print("Loading data files...")
 short_main = safe_load(SHORT_MAIN)
 short_rare = safe_load(SHORT_RARE)
@@ -270,11 +383,15 @@ wide_rare  = safe_load(WIDE_RARE)
 long_main  = safe_load(LONG_MAIN)
 long_rare  = safe_load(LONG_RARE)
 
-# Merge main + rare for short and wide
+# --- Merge main + rare DataFrames ---
+# For "short" and "wide" shapes, main and rare share the same recordID but
+# have different columns.  We LEFT JOIN rare onto main so every driver row
+# gets both the always-asked and rarely-asked columns in one DataFrame.
 short = merge_main_rare(short_main, short_rare)
 wide  = merge_main_rare(wide_main, wide_rare)
 
-# Concatenate long_main and long_rare
+# For "long" format, main and rare have the same columns (recordID, question,
+# answer) but different rows.  We simply stack (concatenate) them vertically.
 if long_main is not None and long_rare is not None:
     long = pd.concat([long_main, long_rare], ignore_index=True)
 elif long_main is not None:
@@ -289,7 +406,10 @@ if short is None:
     short = pd.DataFrame()
     print("[WARN] No short data available -- report will be mostly empty.")
 
-# Rename columns for backward compatibility
+# Rename columns for backward compatibility.
+# data_cleaning.py uses "snapp_CS" / "tapsi_CS_" as column names, but the
+# charting code below references "snapp_customer_support" / "tapsi_customer_support".
+# This rename bridges the gap without modifying either script.
 rename_map = {}
 if "snapp_CS" in short.columns:
     rename_map["snapp_CS"] = "snapp_customer_support"
@@ -307,7 +427,13 @@ if wide is not None:
     if wide_rename:
         wide.rename(columns=wide_rename, inplace=True)
 
-# Ensure critical columns exist (add as NaN if missing) for graceful degradation
+# --- Ensure critical columns exist (add as NaN if missing) ---
+# The charting code below references ~100+ column names.  If a column is
+# missing (e.g., a question was not asked in this survey wave), the code
+# would crash with a KeyError.  Instead, we pre-create every expected column
+# filled with NaN so that charts simply show "no data" gracefully.
+# This list covers satisfaction scores, CS metrics, GPS stages, navigation,
+# incentives, CarFix/Garage, mixed incentive, and other feature columns.
 _ensure = [
     "snapp_overall_satisfaction", "tapsi_overall_satisfaction",
     "snapp_recommend", "tapsidriver_tapsi_recommend",
@@ -371,7 +497,9 @@ for _c in _ensure:
     if _c not in short.columns:
         short[_c] = np.nan
 
-# Filter: drop rows missing snapp_age
+# --- Filter: drop rows missing snapp_age ---
+# snapp_age (tenure bucket like "<3 months", "1-3 years") is used as a key
+# segmentation variable in many charts.  Rows without it are unusable.
 if "snapp_age" in short.columns:
     before = len(short)
     short = short[short["snapp_age"].notna() & (short["snapp_age"] != "")].copy()
@@ -379,14 +507,22 @@ if "snapp_age" in short.columns:
     if dropped_age > 0:
         print(f"Dropped {dropped_age} records with missing snapp_age")
 
-# Sync wide and long to valid recordIDs
+# --- Sync wide and long to valid recordIDs ---
+# After filtering short (dropping missing snapp_age), some recordIDs have been
+# removed.  We filter wide and long to match, so all three DataFrames describe
+# the exact same set of survey respondents.
 valid_ids = set(short["recordID"].unique()) if "recordID" in short.columns else set()
 if wide is not None and "recordID" in wide.columns:
     wide = wide[wide["recordID"].isin(valid_ids)].copy()
 if long is not None and "recordID" in long.columns:
     long = long[long["recordID"].isin(valid_ids)].copy()
 
-# -- Parse datetime & build yearweek -----------------------------------------------
+# ============================================================================
+# DATETIME PARSING & YEARWEEK CONSTRUCTION
+# ============================================================================
+# "yearweek" is a compact numeric identifier for each survey week, formatted
+# as YYWW (e.g., 2507 = year 2025, week 7).  It is used as the x-axis in
+# all weekly trend charts.  We build it from year and weeknumber columns.
 dfs_to_parse = [short]
 if wide is not None:
     dfs_to_parse.append(wide)
@@ -401,7 +537,10 @@ for df in dfs_to_parse:
         (df["year"] % 100) * 100 + df["weeknumber"]
     ).where(df["weeknumber"].notna() & df["year"].notna()).astype("Int64")
 
-# Filter to weeks with >= MIN_WEEK_RESPONSES
+# --- Drop weeks with too few responses ---
+# Weeks with < MIN_WEEK_RESPONSES (default: 100) are unreliable for computing
+# averages.  Small samples cause extreme swings in weekly trend lines,
+# which misleads stakeholders.  We drop them from ALL three DataFrames.
 week_counts_all = short.groupby("yearweek").size()
 valid_weeks = week_counts_all[week_counts_all >= MIN_WEEK_RESPONSES].index
 dropped_weeks = week_counts_all[week_counts_all < MIN_WEEK_RESPONSES]
@@ -415,7 +554,11 @@ if wide is not None:
 if long is not None:
     long = long[long["yearweek"].isin(valid_weeks)].copy()
 
-# Build driver_type column
+# --- Build driver_type column ---
+# Drivers who have zero Tapsi rides (tapsi_ride == 0) work exclusively for
+# Snapp ("Snapp Exclusive").  All others are "Joint" drivers who work for
+# both platforms.  This segmentation is central to understanding competitive
+# dynamics -- do joint drivers rate Snapp lower because they have a benchmark?
 if "tapsi_ride" in short.columns:
     short["driver_type"] = np.where(
         short["tapsi_ride"] == 0, "Snapp Exclusive", "Joint")
@@ -426,23 +569,30 @@ if long is not None and "tapsi_ride" in long.columns:
     long["driver_type"] = np.where(
         long["tapsi_ride"] == 0, "Snapp Exclusive", "Joint")
 
-# Sort by yearweek
+# Sort all DataFrames by yearweek so weekly trend charts plot in chronological order.
 short.sort_values("yearweek", inplace=True)
 if wide is not None:
     wide.sort_values("yearweek", inplace=True)
 if long is not None:
     long.sort_values("yearweek", inplace=True)
 
+# Ordered list of Snapp tenure buckets (snapp_age column values).
+# TENURE_LABELS are shorter versions for chart axis labels.
 TENURE_ORDER = ["less_than_3_months", "3_to_6_months", "6_months_to_1_year",
                 "1_to_3_years", "3_to_5_years", "5_to_7_years", "more_than_7_years"]
 TENURE_LABELS = ["<3 m", "3-6 m", "6m-1y", "1-3 y", "3-5 y", "5-7 y", ">7 y"]
 
+# The 3 core satisfaction dimensions compared throughout the report.
+# Each tuple is (snapp_column, tapsi_column, display_label).
+# These drive the 3-panel charts in plot_sat_by_group and several other pages.
 SAT_PAIRS = [
     ("snapp_fare_satisfaction",      "tapsi_fare_satisfaction",      "Fare"),
     ("snapp_income_satisfaction",    "tapsi_income_satisfaction",    "Income"),
     ("snapp_req_count_satisfaction", "tapsi_req_count_satisfaction", "Request Count"),
 ]
 
+# Boolean flags for quick checks before attempting to build a chart.
+# If HAVE_WIDE is False, pages that rely on binary multi-choice columns are skipped.
 HAVE_SHORT = len(short) > 0
 HAVE_WIDE = wide is not None and len(wide) > 0
 HAVE_LONG = long is not None and len(long) > 0
@@ -454,13 +604,39 @@ print(
     f"{short['yearweek'].nunique() if HAVE_SHORT else 0} weeks")
 print(f"HAVE_SHORT={HAVE_SHORT}, HAVE_WIDE={HAVE_WIDE}, HAVE_LONG={HAVE_LONG}")
 
-# -- Build PDF -------------------------------------------------------------------
+# ============================================================================
+# PDF REPORT GENERATION
+# ============================================================================
+# The entire report is built inside a single `with PdfPages(...) as pdf:` block.
+# Each "PAGE" section below creates one matplotlib Figure, draws charts on it,
+# then calls save_fig(pdf, fig) which writes that figure as the next page in
+# the PDF and closes the figure to free memory.
+#
+# The recurring pattern for most pages is:
+#   1. Create figure & axes  (new_fig, plt.subplots, or plt.figure)
+#   2. Prepare data          (groupby, value_counts, filtering)
+#   3. Draw chart            (ax.bar, ax.barh, ax.plot, ax.pie, ax.scatter)
+#   4. Add labels            (ax.text, bar_label, ax.annotate)
+#   5. Style & save          (style_ax, save_fig)
+#
+# If required data is missing, placeholder_page() creates a "no data" page
+# so that page numbering stays consistent across different survey waves.
+# ============================================================================
 with PdfPages(OUTPUT_PDF) as pdf:
 
 
     # ================================================================
     # PAGE 1 – COVER / KEY KPI SUMMARY
     # ================================================================
+    # Executive dashboard showing high-level KPIs at a glance.
+    # Business value: gives stakeholders instant context (sample size,
+    # satisfaction scores, NPS, incentive spend) before diving into details.
+    #
+    # CHARTING PATTERN -- "manual axes placement" (fig.add_axes):
+    # Instead of plt.subplots, we use fig.add_axes([left, bottom, width, height])
+    # to place axes at exact positions.  This is useful for complex dashboard
+    # layouts where subplots don't give enough control over spacing.
+    # Coordinates are in figure-fraction units: (0,0)=bottom-left, (1,1)=top-right.
     n_total = len(short)
     n_weeks = short["yearweek"].nunique()
     n_cities = short["city"].nunique()
@@ -577,6 +753,13 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 2 – RESPONSE COUNT BY YEARWEEK
     # ================================================================
+    # Shows how many survey responses were collected each week.
+    # Business value: reveals survey cadence and any weeks with low coverage.
+    #
+    # CHARTING PATTERN -- "simple vertical bar chart":
+    # ax.bar(x_labels, heights, color=...) creates a vertical bar chart.
+    # bar_label(ax) adds the numeric height as text above each bar.
+    # This is the simplest charting pattern used throughout the report.
     week_counts = short.groupby("yearweek").size()
     fig, ax = new_fig("Weekly Response Count (by Year-Week)")
     ax.bar(week_counts.index.astype(str), week_counts.values,
@@ -591,6 +774,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 3 – DEMOGRAPHICS OVERVIEW
     # ================================================================
+    # 4-panel overview of who the surveyed drivers are (age, education,
+    # cooperation type, marital status).
+    # Business value: ensures the sample is representative before drawing
+    # conclusions from satisfaction data.
+    #
+    # CHARTING PATTERN -- "2x2 subplots with horizontal bars":
+    # plt.subplots(2, 2) creates a 2-row, 2-column grid of axes.
+    # We loop over axes and draw ax.barh() (horizontal bar) on each panel,
+    # then annotate each bar with "count (percentage%)" text.
     fig, axes = plt.subplots(2, 2, figsize=(12, 8), facecolor=BG_COLOR)
     fig.suptitle("Demographics Overview", fontsize=15,
                  fontweight="bold", y=0.97)
@@ -631,6 +823,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 4 – OCCUPATION BREAKDOWN
     # ================================================================
+    # Top 15 primary occupations of surveyed drivers.
+    # Business value: shows whether drivers are career drivers or side-giggers,
+    # which affects how they perceive fare and incentive adequacy.
     job_counts = short["original_job"].value_counts().head(15)
     fig, ax = new_fig(
         "Primary Occupation of Surveyed Drivers (Top 15)", figsize=(12, 7))
@@ -648,6 +843,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 5 – ACTIVE JOINT RATE BY YEARWEEK
     # ================================================================
+    # Percentage of surveyed drivers who also drive for Tapsi, plotted over time.
+    # Business value: tracks competitive pressure -- a rising joint rate means
+    # more drivers are hedging across platforms.
+    #
+    # CHARTING PATTERN -- "line trend chart":
+    # ax.plot(x, y, marker="o") draws a line with circle markers.
+    # ax.annotate() places the numeric value near each data point.
+    # Used for all weekly trend pages (rides, NPS, incentive, satisfaction).
     weekly_joint = short.groupby("yearweek").agg(
         total=("active_joint", "size"), active=("active_joint", "sum"))
     weekly_joint["rate"] = weekly_joint["active"] / weekly_joint["total"] * 100
@@ -667,6 +870,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 6 – AVERAGE RIDE COUNTS
     # ================================================================
+    # Average weekly rides per driver on Snapp vs Tapsi over time.
+    # Business value: reveals whether drivers are doing more rides on one
+    # platform -- a leading indicator of platform preference and earnings.
+    # Same line-trend pattern as PAGE 5.
     weekly_rides = short.groupby("yearweek").agg(snapp_ride=(
         "snapp_ride", "mean"), tapsi_ride=("tapsi_ride", "mean"))
     fig, ax = new_fig("Average Weekly Ride Count – Snapp vs Tapsi")
@@ -684,6 +891,17 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 7 – SATISFACTION COMPARISON
     # ================================================================
+    # Side-by-side bar chart comparing Snapp vs Tapsi mean satisfaction
+    # across the 3 core dimensions (Fare, Income, Request Count).
+    # Business value: the most direct competitive comparison -- which
+    # platform are drivers more satisfied with, and in which areas?
+    #
+    # CHARTING PATTERN -- "side-by-side (grouped) bar chart":
+    # Uses offset x-positions: Snapp bars at (x - width/2), Tapsi at (x + width/2).
+    # This is the standard matplotlib technique for grouped bars.
+    # ax.bar(x - w/2, snapp_vals, w)  draws the left group (Snapp).
+    # ax.bar(x + w/2, tapsi_vals, w)  draws the right group (Tapsi).
+    # Then loop over bars to place value labels on top of each bar.
     fig, axes = plt.subplots(1, 3, figsize=(
         14, 5), facecolor=BG_COLOR, sharey=True)
     fig.suptitle("Satisfaction Comparison (1–5 scale): Snapp vs Tapsi",
@@ -705,6 +923,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 8 – OVERALL SATISFACTION DISTRIBUTION
     # ================================================================
+    # Histogram of 1-5 satisfaction ratings for Snapp and Tapsi side by side.
+    # Business value: shows whether satisfaction is skewed (e.g., mostly 2s and 3s)
+    # or bimodal (many 1s and 5s), which has different implications than just the mean.
+    #
+    # CHARTING PATTERN -- "paired histograms (1x2 subplots)":
+    # plt.subplots(1, 2, sharey=True) creates two panels sharing the y-axis.
+    # We loop: for each platform, count occurrences of each rating (1-5) using
+    # value_counts().sort_index(), then draw ax.bar() with those counts.
     fig, axes = plt.subplots(1, 2, figsize=(
         12, 5), facecolor=BG_COLOR, sharey=True)
     fig.suptitle("Overall Satisfaction Distribution (1–5 scale)",
@@ -729,6 +955,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 9 – NPS BY YEARWEEK
     # ================================================================
+    # Net Promoter Score trend over time for both platforms.
+    # Business value: NPS is a widely-used loyalty metric.  Tracking it weekly
+    # reveals whether recent changes (fare adjustments, app updates) improved
+    # or hurt driver willingness to recommend the platform.
+    # Same line-trend pattern as PAGE 5.
     nps_weekly = short.groupby("yearweek").agg(
         snapp_nps=("snapp_recommend", nps_score), tapsi_nps=("tapsidriver_tapsi_recommend", nps_score)).dropna(how="all")
     fig, ax = new_fig("NPS (Net Promoter Score) by Year-Week – Snapp vs Tapsi")
@@ -749,6 +980,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 10 – INCENTIVE CATEGORY BREAKDOWN
     # ================================================================
+    # Distribution of incentive categories (e.g., commission-free, pay-after-ride).
+    # Business value: shows which incentive types each platform relies on most.
+    # Same paired-horizontal-bar pattern as PAGE 8 but with barh instead of bar.
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Incentive Category Distribution",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -767,6 +1001,16 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 11 – INCENTIVE TYPE USAGE (wide_survey)
     # ================================================================
+    # Counts how many drivers selected each incentive type (multi-choice).
+    # Data comes from wide_survey binary columns (1 = driver chose this type).
+    # Business value: reveals which incentive structures are most popular.
+    #
+    # CHARTING PATTERN -- "wide binary column aggregation":
+    # For multi-choice questions, data_cleaning.py creates one binary column
+    # per answer option (e.g., "Snapp Incentive Type__Pay After Ride").
+    # We sum each column (wide[col].sum()) to get the total count of drivers
+    # who selected that option, then plot as horizontal bars.
+    # This pattern recurs on pages 12, 16, 17, 21, 22, 33-34, 70-71.
     incentive_types = {
         "Snapp": {"Pay After Ride": "Snapp Incentive Type__Pay After Ride",
                   "Ride-Based Comm-free": "Snapp Incentive Type__Ride-Based Commission-free",
@@ -801,6 +1045,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 12 – INCENTIVE UNSATISFACTION REASONS
     # ================================================================
+    # Why drivers are unsatisfied with incentives (multi-choice from wide survey).
+    # Business value: actionable feedback for incentive program redesign.
+    # Same wide-binary-column pattern as PAGE 11.
     unsat_types = {
         "Snapp": {"Improper Amount": "Snapp Incentive Unsatisfaction__Improper Amount",
                   "Difficult": "Snapp Incentive Unsatisfaction__difficult",
@@ -835,6 +1082,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 13 – AVERAGE INCENTIVE (RIALS) BY YEARWEEK
     # ================================================================
+    # Weekly trend of average monetary incentive paid per driver, in million Rials.
+    # Business value: tracks incentive spend efficiency over time.
+    # Same line-trend pattern as PAGE 5.
     weekly_inc = short.groupby("yearweek").agg(
         snapp=("snapp_incentive", "mean"), tapsi=("tapsi_incentive", "mean"))
     fig, ax = new_fig("Average Monetary Incentive by Year-Week (Rials)")
@@ -852,6 +1102,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 14 – INCENTIVE SATISFACTION DISTRIBUTION
     # ================================================================
+    # Histogram of incentive satisfaction ratings (1-5) for each platform.
+    # Business value: shows how drivers feel about the incentive amounts they receive.
+    # Same paired-histogram pattern as PAGE 8.
     fig, axes = plt.subplots(1, 2, figsize=(
         12, 5), facecolor=BG_COLOR, sharey=True)
     fig.suptitle("Incentive Satisfaction Distribution (1–5 scale)",
@@ -876,6 +1129,13 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 15 – LOC DISTRIBUTION
     # ================================================================
+    # Histogram of how many months each driver has cooperated with each platform.
+    # Business value: reveals driver retention -- a long tail means good retention,
+    # while a spike at low months means high churn.
+    #
+    # CHARTING PATTERN -- "histogram":
+    # ax.hist(data, bins=20) creates a frequency histogram.
+    # ax.axvline(data.mean()) draws a vertical dashed line at the mean.
     fig, axes = plt.subplots(1, 2, figsize=(
         12, 5), facecolor=BG_COLOR, sharey=True)
     fig.suptitle("Length of Cooperation Distribution (months)",
@@ -896,6 +1156,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 16 – RIDE REFUSAL REASONS
     # ================================================================
+    # Why drivers refuse ride requests, compared side-by-side for both platforms.
+    # Data comes from wide survey binary columns.
+    # Business value: "Insufficient Fare" being #1 is actionable pricing feedback.
+    #
+    # CHARTING PATTERN -- "paired horizontal bar chart (dodge)":
+    # Two sets of barh at offset y-positions: y - h/2 (Snapp) and y + h/2 (Tapsi).
+    # This is the horizontal equivalent of the side-by-side bar pattern from PAGE 7.
+    # ax.invert_yaxis() puts the first category at the top (more natural reading).
     refusal_labels = ["Insufficient Fare", "Distance to Origin", "Wait for Better", "Long Trip",
                       "Target Destination", "Traffic", "Short Accept Time", "Unfamiliar Route",
                       "Internet Problems", "App Problems", "App was Unfamiliar", "Was Working w/ Other"]
@@ -938,6 +1206,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 17 – CUSTOMER SUPPORT CATEGORY
     # ================================================================
+    # Which categories (fare, cancelling, technical, etc.) drivers contact CS about.
+    # Business value: helps CS teams prioritize staffing for the most common issues.
+    # Same paired-horizontal-bar (dodge) pattern as PAGE 16.
     cs_labels = ["Fare", "Cancelling", "Trip Problems", "Petrol", "Technical",
                  "Settlement", "Incentive", "Location Change", "Drivers Club", "Registration"]
     snapp_cs = [f"Snapp Customer Support Category__{l}" for l in cs_labels]
@@ -966,6 +1237,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 18 – NAVIGATION APP ADOPTION FUNNEL (long_survey)
     # ================================================================
+    # 3-stage funnel (Familiar -> Installed -> Used) for 4 navigation apps.
+    # Data comes from the long survey where question = "Navigation Familiarity" etc.
+    # Business value: shows which nav apps are adopted vs just known, informing
+    # potential partnerships.
+    #
+    # CHARTING PATTERN -- "long-survey question filter":
+    # long_df[long_df["question"] == stage] filters to rows for one question,
+    # then we count how many rows have each answer value.
+    # This is the standard way to extract data from the melted long format.
     nav_apps = ["Google Map", "Waze", "Neshan", "Balad"]
     nav_colors = [ACCENT, "#FFA726", "#66BB6A", "#AB47BC"]
     stages = ["Navigation Familiarity",
@@ -989,6 +1269,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 19 – NAVIGATION APP RATINGS (0–10 scale)
     # ================================================================
+    # Mean recommendation score (0-10) for each nav app, plus a distribution
+    # comparison of Neshan vs Balad (the two Iranian-built apps).
+    # Business value: quantifies driver preference among navigation tools.
     nav_rating_cols = {"Google Maps": "recommendation_googlemap", "Waze": "recommendation_waze",
                        "Neshan": "recommendation_neshan", "Balad": "recommendation_balad"}
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
@@ -1024,6 +1307,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 20 – GPS FAILURE STAGE DISTRIBUTION
     # ================================================================
+    # At which stage of a ride does GPS typically fail (offer, en route to
+    # passenger, origin-to-destination, or all stages)?
+    # Business value: helps engineering teams focus GPS fixes on the right stage.
     gps_stages = ["No problem", "Offer", "in route to passenger",
                   "Origin to Destination route", "All stages"]
     fig, axes = plt.subplots(1, 2, figsize=(
@@ -1047,6 +1333,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 21 – GPS GLITCH TIME OF DAY
     # ================================================================
+    # When during the day GPS glitches are most common (wide binary columns).
+    # Business value: if glitches concentrate during traffic hours, it may
+    # indicate network congestion rather than a pure GPS issue.
+    # Same wide-binary-column pattern as PAGE 11.
     gps_time_cols = {"Morning (4–9 AM)": "GPS Glitch Time__Morning(4-9AM)",
                      "Before Noon (9–12 PM)": "GPS Glitch Time__Before Noon(9-12PM)",
                      "Afternoon (12–4 PM)": "GPS Glitch Time__Afternoon(12-4PM)",
@@ -1070,6 +1360,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 22 – GPS GLITCH ACTIONS
     # ================================================================
+    # What drivers do when GPS fails (call passenger, accept familiar trips,
+    # cancel trip, switch to Tapsi, etc.).
+    # Business value: "Switched to Tapsi" directly quantifies churn risk from GPS issues.
+    # Same wide-binary-column pattern as PAGE 11.
     gps_action_map = {"Called Passenger": "GPS Action when Glitch__Called Passenger",
                       "Accepted Familiar Trips": "GPS Action when Glitch__Accepted familiar trips",
                       "Passenger Help for Route": "GPS Action when Glitch__Passenger Help for route",
@@ -1092,6 +1386,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 23 – COMMISSION & TAX TRANSPARENCY
     # ================================================================
+    # What drivers believe about commission rates and tax deductions.
+    # Business value: if many drivers give wrong answers, the platform needs
+    # better communication about its fee structure.
+    # Same 2x2 subplot with horizontal bars pattern as PAGE 3.
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), facecolor=BG_COLOR)
     fig.suptitle("Commission & Tax Transparency – What Drivers Believe",
                  fontsize=15, fontweight="bold", y=0.97)
@@ -1116,6 +1414,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 24 – UNPAID FARES – INCIDENT RATE & COMPENSATION
     # ================================================================
+    # How often drivers experience unpaid fares, and whether the platform
+    # compensates them (fully, partially, or not at all).
+    # Business value: compensation fairness is a major trust driver --
+    # Tapsi's higher full-compensation rate (63%) builds driver loyalty.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Unpaid by Passenger – Incident Rate & Compensation",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1169,6 +1471,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 25 – CUSTOMER SUPPORT CHANNEL USAGE
     # ================================================================
+    # How drivers contact customer support (app, call, in-person, etc.).
+    # Business value: informs CS channel investment -- if most contact is via
+    # app, investing in chatbot quality pays off more than call center expansion.
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), facecolor=BG_COLOR)
     fig.suptitle("Customer Support Channel Usage – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1188,6 +1493,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 26 – CUSTOMER SUPPORT DEEP DIVE
     # ================================================================
+    # 3-panel deep dive: issue resolution rate, satisfaction sub-scores
+    # (wait time, solution quality, behaviour, relevance), and top
+    # dissatisfaction reasons for Snapp CS.
+    # Business value: pinpoints exactly where CS falls short (e.g., wait time
+    # vs solution quality) for targeted improvement.
     fig, axes = plt.subplots(1, 3, figsize=(16, 6), facecolor=BG_COLOR)
     fig.suptitle("Customer Support Quality Deep Dive – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1253,9 +1563,13 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # ================================================================
-    # PAGES 27–65 (unchanged from v5)
+    # PAGES 27–65
     # ================================================================
+
     # PAGE 27 – COLLABORATION REASONS
+    # Why drivers chose to work with Snapp or Tapsi (top 10 reasons).
+    # Business value: reveals the primary value propositions each platform
+    # offers from the driver's perspective.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Collaboration Reasons – Why Drivers Chose Each Platform",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1275,6 +1589,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 28 – INCOME SOURCE PREFERENCE
+    # Drivers' perception of which platform yields better income.
+    # Business value: subjective income perception drives platform switching.
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Which Service Yields Better Income? (Driver Perception)",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1290,7 +1606,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 29 – SATISFACTION BY YEARWEEK
+    # PAGE 29 – SATISFACTION BY YEARWEEK (TREND LINES)
+    # Fare, Income, and Request Count satisfaction tracked weekly.
+    # Business value: shows whether satisfaction is improving or declining,
+    # and whether changes align with known business events (fare changes, etc.).
     fig, axes = plt.subplots(1, 3, figsize=(
         16, 5), facecolor=BG_COLOR, sharey=True)
     fig.suptitle("Avg Satisfaction by Year-Week: Snapp vs Tapsi",
@@ -1318,14 +1637,23 @@ with PdfPages(OUTPUT_PDF) as pdf:
     axes[0].set_ylabel("Mean Satisfaction (1–5)")
     save_fig(pdf, fig)
 
-    # PAGE 30–32 – SATISFACTION BY GROUP
+    # PAGES 30–32 – SATISFACTION BY GROUP
+    # Each call to plot_sat_by_group creates a 3-panel page (Fare, Income,
+    # Request Count) segmented by one demographic variable.
+    # PAGE 30: by cooperation type -- do full-time drivers rate differently?
     plot_sat_by_group(pdf, short, "cooperation_type", "Cooperation Type")
+    # PAGE 31: by city (top 10) -- which cities have the happiest drivers?
     plot_sat_by_group(pdf, short, "city", "City (Top 10)",
                       top_n=10, min_group_size=20)
+    # PAGE 32: by driver type -- joint drivers can compare platforms directly.
     plot_sat_by_group(pdf, short, "driver_type",
                       "Driver Type (Snapp Exclusive vs Joint)")
 
     # PAGE 33 – SATISFACTION HONEYMOON EFFECT
+    # Shows how satisfaction and recommendation scores decline as drivers gain
+    # more tenure on Snapp.  New drivers (<3 months) typically rate higher.
+    # Business value: quantifies the "honeymoon effect" -- retention strategies
+    # should target the tenure band where satisfaction drops most sharply.
     valid_tenure = [
         t for t in TENURE_ORDER if t in short["snapp_age"].unique()]
     sat_by_tenure = short.groupby("snapp_age").agg(
@@ -1378,10 +1706,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 34 – SATISFACTION BY AGE GROUP
+    # Satisfaction segmented by driver age bracket.
+    # Business value: younger drivers may have different expectations.
     age_order = ["<18", "18_25", "26_35", "36_45", "46_55", "56_65", ">65"]
     plot_sat_by_group(pdf, short, "age", "Age Group", order=age_order)
 
-    # PAGE 35 – SATISFACTION BY ACTIVE TIME
+    # PAGE 35 – SATISFACTION BY ACTIVE TIME (ENGAGEMENT LEVEL)
+    # Satisfaction and recommendation segmented by weekly driving hours.
+    # Business value: heavy users (>40h/week) may be less satisfied because
+    # they hit more pain points, or more satisfied because they earn more.
     active_order = ["few hours/month", "<20hour/mo", "5_20hour/week",
                     "20_40h/week", ">40h/week", "8_12hour/day", ">12h/day"]
     active_labels_display = {
@@ -1432,6 +1765,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 36 – SATISFACTION BY OCCUPATION
+    # Satisfaction and recommendation by primary job (only jobs with n>=100).
+    # Business value: professional drivers vs side-giggers have different
+    # satisfaction profiles and churn risk.
     job_sat = short.groupby("original_job").agg(
         n=("snapp_overall_satisfaction", "count"),
         snapp_overall=("snapp_overall_satisfaction", "mean"),
@@ -1470,6 +1806,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 37 – TAPSI CARPOOLING
+    # 4-panel deep dive into Tapsi's carpooling feature: familiarity,
+    # offer acceptance rate, refusal reasons, and satisfaction.
+    # Business value: measures feature adoption and identifies barriers.
+    #
+    # CHARTING PATTERN -- "pie chart":
+    # ax.pie(values, labels=..., autopct="%1.0f%%") creates a pie chart.
+    # wedgeprops={"edgecolor": "white"} separates slices visually.
+    # Pie charts are used sparingly -- only for binary/few-category data
+    # where the part-of-whole relationship is the key insight.
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), facecolor=BG_COLOR)
     fig.suptitle("Tapsi Carpooling – Familiarity, Adoption, Refusal & Satisfaction",
                  fontsize=15, fontweight="bold", y=0.97)
@@ -1519,6 +1864,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 38 – ECOPLUS & MAGICAL WINDOW
+    # Adoption funnels for Snapp EcoPlus and Tapsi Magical Window features.
+    # Business value: how many drivers know about these features vs actually use them.
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), facecolor=BG_COLOR)
     fig.suptitle("Feature Adoption – Snapp EcoPlus & Tapsi Magical Window",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1550,7 +1897,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 39 – DRIVER PRIVACY
+    # PAGE 39 – DRIVER PRIVACY & PARTICIPATION ATTITUDES
+    # How comfortable drivers are talking about their work around others,
+    # and why some avoid it (stigma, privacy, family pressure, etc.).
+    # Business value: social perception of rideshare driving affects recruitment.
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), facecolor=BG_COLOR)
     fig.suptitle("Driver Privacy & Participation Attitudes (Snapp)",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1580,7 +1930,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 40 – DEMAND
+    # PAGE 40 – DEMAND & SUPPLY METRICS
+    # 3-panel view: % of demand processed, missed trips per 10, max simultaneous demand.
+    # Business value: supply-demand mismatch is the root cause of many driver complaints.
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), facecolor=BG_COLOR)
     fig.suptitle("Demand & Supply – How Much Demand Do Drivers Process?",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1600,6 +1952,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 41 – COMMISSION-FREE RIDES
+    # Scatter plot: commission-free rides vs total rides.
+    # The y=x line shows where a driver would have ALL rides commission-free.
+    # Business value: shows how much of the incentive budget goes to commission waivers.
+    #
+    # CHARTING PATTERN -- "scatter plot":
+    # ax.scatter(x, y, alpha=0.3) plots individual driver data points.
+    # alpha < 1.0 makes overlapping points semi-transparent so density is visible.
+    # ax.plot(lims, lims, "--") draws a diagonal reference line.
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Commission-Free Rides vs Total Rides",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1622,6 +1982,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 42 – TOP 15 CITIES
+    # Geographic distribution of survey responses by city.
+    # Business value: ensures the survey is not overly Tehran-centric.
     city_counts = short["city"].value_counts().head(15)
     fig, ax = new_fig("Top 15 Cities by Response Count")
     ax.barh(city_counts.index[::-1], city_counts.values[::-1],
@@ -1633,6 +1995,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 43 – CITY SATISFACTION
+    # Satisfaction and recommendation scores for the top 12 cities.
+    # Business value: identifies cities where satisfaction is lagging and
+    # operations teams can intervene with targeted improvements.
     top_cities = short["city"].value_counts().head(12).index
     city_sat = (short[short["city"].isin(top_cities)].groupby("city")
                 .agg(snapp_sat=("snapp_overall_satisfaction", "mean"), tapsi_sat=("tapsi_overall_satisfaction", "mean"),
@@ -1669,7 +2034,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 44 – REGISTRATION
+    # PAGE 44 – REGISTRATION & REFERRAL
+    # 4-panel: registration type and main registration reason for each platform.
+    # Business value: shows how drivers found the platform (referral, ad, organic).
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), facecolor=BG_COLOR)
     fig.suptitle("Registration & Referral Analysis",
                  fontsize=15, fontweight="bold", y=0.97)
@@ -1694,15 +2061,23 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGES 45–50 – LONG SURVEY PAGES
+    # PAGES 45-47 – LONG SURVEY MULTI-CHOICE PAGES
+    # These use plot_long_snapp_vs_tapsi: a reusable function that filters
+    # the long DataFrame by question name and shows answer distributions
+    # as horizontal bar charts in a 2-panel (Snapp | Tapsi) layout.
+    # PAGE 45: Incentive Type distribution from long survey
     plot_long_snapp_vs_tapsi(pdf, long, "Snapp Incentive Type",
                              "Tapsi Incentive Type", "Incentive Type – long_survey")
+    # PAGE 46: Whether drivers received their incentive bonus
     plot_long_snapp_vs_tapsi(pdf, long, "Snapp Incentive GotBonus",
                              "Tapsi Incentive GotBonus", "Incentive Got Bonus – long_survey")
+    # PAGE 47: CS contact categories from the long survey perspective
     plot_long_snapp_vs_tapsi(pdf, long, "Snapp Customer Support Category",
                              "Tapsi Customer Support Category", "Customer Support Categories – long_survey")
 
     # PAGE 48 – SNAPP NAVIGATION ISSUES
+    # What makes drivers unsatisfied with Snapp navigation, and why they refuse it.
+    # Business value: direct product feedback for the Snapp navigation team.
     nav_unsat_q = long[long["question"] == "Snapp Navigation Unsatisfaction"]
     nav_refusal_q = long[long["question"] == "Snapp Navigation Refusal"]
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
@@ -1727,7 +2102,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # PAGE 49 – DECLINE REASON & APP MENU
+    # PAGE 49 – DECLINE REASON & APP MENU USAGE
+    # Why drivers decline trips (from long survey), and which SnappDriver app
+    # menu features they actually use.
+    # Business value: app menu usage shows which features are discovered vs ignored.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Decline Reason & SnappDriver App Menu Usage – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1751,7 +2129,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # PAGE 50 – TAPSI-ONLY
+    # PAGE 50 – TAPSI-ONLY QUESTIONS (LONG SURVEY)
+    # Tapsi-specific multi-choice questions: incentive unsatisfaction reasons
+    # and carpooling refusal reasons from the long survey format.
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor=BG_COLOR)
     fig.suptitle("Tapsi-Only Questions – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1777,7 +2157,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # PAGE 51 – CS BY DRIVER TYPE
+    # PAGES 51-52 – CS CATEGORY BY DRIVER TYPE
+    # Customer support categories broken down by Joint vs Snapp-Exclusive drivers.
+    # Business value: do joint drivers have different support needs?
+    # Uses a grouped horizontal bar chart with driver_type as the group variable.
+    #
+    # CHARTING PATTERN -- "grouped barh by pivot table":
+    # groupby(["driver_type", "answer"]).size().unstack() creates a pivot table
+    # with driver types as rows and answer categories as columns.
+    # Each driver type gets its own set of bars at offset y-positions.
     for q, platform, color in [
         ("Snapp Customer Support Category", "Snapp", SNAPP_COLOR),
         ("Tapsi Customer Support Category", "Tapsi", TAPSI_COLOR),
@@ -1808,6 +2196,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         save_fig(pdf, fig)
 
     # PAGE 53 – APP USAGE & ECOPLUS REFUSAL
+    # Which SnappDriver app features are used, and why drivers refuse EcoPlus.
+    # Business value: EcoPlus refusal reasons guide feature improvement.
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor=BG_COLOR)
     fig.suptitle("Snapp App Usage & EcoPlus Refusal – long_survey",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1831,7 +2221,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_xlabel("Count")
     save_fig(pdf, fig)
 
-    # PAGE 54 – DRIVER TYPE METRICS
+    # PAGE 54 – JOINT VS SNAPP-EXCLUSIVE KEY METRICS
+    # 3-panel comparison: overall satisfaction, avg weekly rides, and avg incentive
+    # for Joint vs Snapp-Exclusive drivers.
+    # Business value: are exclusive drivers happier or just less informed about
+    # alternatives?  Do they ride more because they are not splitting time?
     metrics_by_dt = short.groupby("driver_type").agg(
         n=("snapp_overall_satisfaction", "count"), snapp_sat=("snapp_overall_satisfaction", "mean"),
         tapsi_sat=("tapsi_overall_satisfaction", "mean"), snapp_ride=("snapp_ride", "mean"),
@@ -1892,7 +2286,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 55 – INCENTIVE FUNNEL
+    # PAGE 55 – INCENTIVE FULL FUNNEL
+    # Tracks the conversion from "received incentive notification" to "actually
+    # participated in the incentive program" for both platforms.
+    # Business value: a large drop between notification and participation means
+    # the incentive offer is not compelling enough or too complex.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Incentive Full Funnel – Notification → Participation",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -1939,7 +2337,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 56 – INCENTIVE TIME WINDOW
+    # PAGE 56 – INCENTIVE ACTIVE DURATION
+    # How long drivers stay active in an incentive program (few hours, 1 day, 1-6 days, etc.).
+    # Business value: if most exit within hours, the incentive structure may need
+    # longer engagement windows.
     time_order = ["Few Hours", "1 Day", "1_6 Days", "7 Days", ">7 Days"]
     fig, axes = plt.subplots(1, 2, figsize=(14, 5), facecolor=BG_COLOR)
     fig.suptitle("Incentive Active Duration – Snapp vs Tapsi",
@@ -1966,7 +2367,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 57 – TAPSI RE-ACTIVATION
+    # PAGE 57 – TAPSI RE-ACTIVATION TIMING
+    # How long a driver was inactive before responding to a Tapsi incentive.
+    # Business value: if many responders were dormant >6 months, incentives are
+    # effectively re-acquiring churned drivers, not just activating current ones.
     inact_col = "tapsi_inactive_b4_incentive"
     inact_order = ["Same Day", "1_3 Day Before", "4_7 Day Before", "1_4 Week Before",
                    "1_3 Month Before", "3_6 Month Before", ">6 Month Before"]
@@ -1994,6 +2398,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 58 – APP NPS vs PLATFORM NPS
+    # Compares two different NPS questions: "Would you recommend the driver app?"
+    # vs "Would you recommend driving on this platform?"
+    # Business value: if App NPS is much lower than Platform NPS, the app itself
+    # (not the business model) is the problem.
+    #
+    # CHARTING PATTERN -- "NPS distribution with color-coded bars":
+    # Each bar is colored by NPS category: red (0-6 = detractor),
+    # grey (7-8 = passive), green (9-10 = promoter).
+    # This visual instantly shows the promoter/detractor split.
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG_COLOR)
     fig.suptitle("App NPS vs Platform NPS – Snapp & Tapsi",
                  fontsize=15, fontweight="bold", y=0.98)
@@ -2031,7 +2444,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 59 – COMMISSION KNOWLEDGE × SATISFACTION
+    # PAGE 59 – COMMISSION KNOWLEDGE x SATISFACTION CROSS-TAB
+    # Groups drivers by their commission knowledge response, then shows mean
+    # overall satisfaction for each group.
+    # Business value: tests the hypothesis that drivers who understand commissions
+    # are more (or less) satisfied than those who do not.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Commission Knowledge × Overall Satisfaction Cross-Tab",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -2063,6 +2480,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 60 – UNPAID FARE FOLLOW-UP SATISFACTION
+    # Satisfaction with the unpaid fare resolution process: overall and time-to-resolve.
+    # Business value: measures whether the follow-up process itself is satisfactory,
+    # not just whether the issue was resolved.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Unpaid Fare Follow-up Satisfaction – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -2099,6 +2519,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 61 – TRIP LENGTH PREFERENCE
+    # What trip length drivers prefer to accept (short, average, long).
+    # Business value: if most prefer short trips, long-trip pricing may need adjustment.
     trip_order = ["Short Trip", "Average Trip", "Long Trip"]
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Trip Length Preference – What Drivers Mostly Accept",
@@ -2126,7 +2548,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 62 – NAVIGATION IN LAST TRIP
+    # PAGE 62 – NAVIGATION APP USED IN LAST TRIP
+    # Which navigation app drivers actually used in their most recent trip.
+    # Business value: actual usage (vs familiarity on PAGE 18) shows real adoption.
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
     fig.suptitle("Navigation App Used in Last Trip – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -2158,6 +2582,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 63 – JOINING BONUS
+    # Whether drivers received a bonus when they first registered on each platform.
+    # Business value: measures the reach of new-driver acquisition programs.
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), facecolor=BG_COLOR)
     fig.suptitle("Joining Bonus & Registration Origin – Snapp vs Tapsi",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -2185,6 +2611,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     save_fig(pdf, fig)
 
     # PAGE 64 – TAPSI NAVIGATION DEEP-DIVE
+    # 4-panel: Tapsi in-app navigation usage and satisfaction, offline navigation
+    # familiarity and usage during GPS issues.
+    # Business value: Tapsi has built its own navigation -- how well is it working?
     fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG_COLOR)
     fig.suptitle("Tapsi Navigation Deep-Dive – In-App & Offline Navigation",
                  fontsize=15, fontweight="bold", y=0.98)
@@ -2214,7 +2643,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
     save_fig(pdf, fig)
 
-    # PAGE 65 – TAPSI GPS + MAGICAL WINDOW + REFERRAL
+    # PAGE 65 – TAPSI GPS PERFORMANCE & MAGICAL WINDOW
+    # 3-panel: driver perception of Tapsi GPS vs Snapp, Magical Window awareness,
+    # and Tapsi Incentive GotBonus from the long survey.
+    # Business value: competitive GPS perception and feature awareness tracking.
     fig, axes = plt.subplots(1, 3, figsize=(16, 5), facecolor=BG_COLOR)
     fig.suptitle("Tapsi: GPS Performance Perception & Magical Window / Referral Program",
                  fontsize=15, fontweight="bold", y=0.99)
@@ -2275,6 +2707,12 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 66 – SPEED SATISFACTION
     # ================================================================
+    # Distribution of app speed satisfaction (1-5) for each platform.
+    # Business value: app performance (loading times, lag) directly affects
+    # driver productivity and willingness to use the platform.
+    # Same paired-histogram pattern as PAGE 8.
+    # Note: pages 66+ use HAVE_SHORT/HAVE_WIDE guard checks and produce
+    # placeholder pages when data is unavailable (graceful degradation).
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 66 – Speed Satisfaction",
                          "short DataFrame not available")
@@ -2324,6 +2762,17 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 67 – SNAPP CARFIX DEEP-DIVE
     # ================================================================
+    # CarFix is Snapp's car maintenance / parts marketplace for drivers.
+    # 4-panel layout: adoption funnel (familiar -> ever used -> used last month),
+    # satisfaction across multiple dimensions, recommendation NPS, and
+    # reasons for not using (from long survey).
+    # Business value: measures whether drivers are adopting this ancillary service
+    # and where satisfaction gaps exist in the buying experience.
+    #
+    # CHARTING PATTERN -- "adoption funnel":
+    # A series of bars where each subsequent bar should be smaller (or equal),
+    # showing progressive drop-off from awareness to usage.
+    # Colors darken at each stage to reinforce the narrowing funnel.
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 67 – Snapp CarFix Deep-Dive",
                          "short DataFrame not available")
@@ -2467,6 +2916,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 68 – TAPSI GARAGE DEEP-DIVE
     # ================================================================
+    # Tapsi Garage is Tapsi's equivalent of Snapp CarFix (car maintenance marketplace).
+    # Same 4-panel layout as PAGE 67 (funnel, satisfaction, recommendation, not-use reasons).
+    # Business value: direct competitive comparison with CarFix adoption and satisfaction.
+    # Same adoption-funnel pattern as PAGE 67.
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 68 – Tapsi Garage Deep-Dive",
                          "short DataFrame not available")
@@ -2597,6 +3050,15 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 69 – MIXED INCENTIVE STRATEGY
     # ================================================================
+    # "Mixed incentive" is a combined incentive approach.  This page covers
+    # awareness, activation familiarity, trip effect, Snapp-only preference,
+    # and driver choice among incentive options.
+    # Business value: tests whether a mixed incentive model would retain more drivers.
+    #
+    # CHARTING PATTERN -- "gridspec layout":
+    # gridspec.GridSpec(2, 3) creates a flexible grid where the bottom-right
+    # panel spans two columns (gs[1, 1:]).  This is useful when panels have
+    # unequal importance -- the "choice" panel needs more width.
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 69 – Mixed Incentive Strategy",
                          "short DataFrame not available")
@@ -2724,6 +3186,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 70 – REQUEST REFUSAL REASONS (wide binary)
     # ================================================================
+    # Why drivers refuse ride requests, from the wide survey binary columns.
+    # Similar to PAGE 16 but uses different column names ("Request Refusal" vs
+    # "Ride Refusal") from a different survey section.
+    # Business value: identifies the most common friction points in ride acceptance.
+    # Same paired-horizontal-bar pattern as PAGE 16.
     if not HAVE_WIDE:
         placeholder_page(pdf, "Page 70 – Request Refusal Reasons",
                          "wide DataFrame not available")
@@ -2787,6 +3254,11 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 71 – APP NOTIFICATION CHANNELS
     # ================================================================
+    # How Snapp communicates with drivers (SMS, call, app notification, Telegram,
+    # Instagram) and which broadcast channels drivers follow.
+    # Business value: guides marketing channel investment -- reach drivers where
+    # they actually pay attention.
+    # Same wide-binary-column pattern as PAGE 11.
     if not HAVE_WIDE:
         placeholder_page(pdf, "Page 71 – App Notification Channels",
                          "wide DataFrame not available")
@@ -2862,6 +3334,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 72 – FIX LOCATION FEATURE + OS DISTRIBUTION
     # ================================================================
+    # 4-panel: Fix Location feature adoption and satisfaction, OS distribution
+    # (Android vs iOS), and GPS problem awareness.
+    # Business value: OS distribution affects app development priorities; Fix Location
+    # adoption shows whether drivers use GPS correction tools.
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 72 – Fix Location & OS Distribution",
                          "short DataFrame not available")
@@ -2979,6 +3455,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # ================================================================
     # PAGE 73 – INCENTIVE RULES AWARENESS + PREFERENCE
     # ================================================================
+    # Do drivers understand incentive rules?  Which incentive type do they prefer?
+    # Business value: low rules awareness = communication gap; preference data
+    # guides incentive program design.
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 73 – Incentive Rules & Preference",
                          "short DataFrame not available")
@@ -3046,8 +3525,12 @@ with PdfPages(OUTPUT_PDF) as pdf:
             save_fig(pdf, fig)
 
     # ================================================================
-    # PAGE 74 – NEXT-WEEK INTENT + RATE PASSENGER FEATURE
+    # PAGE 74 – NEXT-WEEK USAGE INTENT + RATE PASSENGER FEATURE
     # ================================================================
+    # Will drivers use Snapp next week (retention intent), and are they familiar
+    # with the rate-passenger feature?
+    # Business value: next-week intent is a leading indicator of churn; rate-passenger
+    # feature awareness affects two-sided marketplace quality.
     if not HAVE_SHORT:
         placeholder_page(pdf, "Page 74 – Next-Week Intent & Rate Passenger",
                          "short DataFrame not available")
