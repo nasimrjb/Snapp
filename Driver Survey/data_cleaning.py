@@ -18,7 +18,7 @@ What this script does:
          - short_survey_main.csv  -- one row per respondent, single-choice
                                      questions asked always/often + computed cols
          - wide_survey_main.csv   -- one row per respondent, multi-choice
-                                     questions (binary 0/1 columns) + computed cols
+                                     questions (binary 0/1 columns) + computed cols 
          - long_survey_main.csv   -- one row per (respondent x selected answer),
                                      multi-choice questions melted into long format
          - short_survey_rare.csv  -- same as short_main but for rare questions
@@ -46,7 +46,8 @@ import re
 import unicodedata
 import numpy as np
 import pandas as pd
-from collections import defaultdict  # defaultdict: a dict that auto-creates missing keys with a default value
+# defaultdict: a dict that auto-creates missing keys with a default value
+from collections import defaultdict
 
 # ============================================================
 # CONFIGURATION — paths to raw data, mapping file, and output folder
@@ -718,7 +719,7 @@ def add_computed_columns(short_df, wide_df):
         "750k_1m": 8_750_000,    # 750k-1m Tomans → 875k midpoint
         "800k_1m": 9_000_000,    # 800k-1m Tomans → 900k midpoint
         "1m_1.25m": 11_250_000,  # 1-1.25m Tomans → 1.125m midpoint
-        "1.25m_1.5m": 13_750_000, # 1.25-1.5m Tomans → 1.375m midpoint
+        "1.25m_1.5m": 13_750_000,  # 1.25-1.5m Tomans → 1.375m midpoint
         ">1m": 12_500_000,       # >1m Tomans → 1.25m estimate
         ">1.5m": 17_500_000,     # >1.5m Tomans → 1.75m estimate
     }
