@@ -125,6 +125,7 @@ Usage:
 # PdfPages lets us write multiple matplotlib figures into a single PDF file,
 # where each figure becomes one page.  This is how we build the 74-page report.
 from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib
 # Custom axis tick formatting (e.g., percentage labels)
 import matplotlib.ticker as mticker
 # Flexible grid layouts for complex multi-panel pages
