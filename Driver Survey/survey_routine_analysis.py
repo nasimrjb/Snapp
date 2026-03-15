@@ -89,7 +89,15 @@ def load_data():
     for key, fname in files.items():
         path = os.path.join(PROCESSED_DIR, fname)
         print(f"  Loading {fname}...")
-        data[key] = pd.read_csv(path, low_memory=False)
+        if not os.path.exists(path):
+            print(f"    WARNING: {fname} not found, using empty DataFrame")
+            data[key] = pd.DataFrame()
+            continue
+        try:
+            data[key] = pd.read_csv(path, low_memory=False)
+        except pd.errors.EmptyDataError:
+            print(f"    WARNING: {fname} is empty, using empty DataFrame")
+            data[key] = pd.DataFrame()
     print(f"  Done. short_main shape: {data['short_main'].shape}")
     available = [c for c in MERGE_COLS if c in data["short_main"].columns]
     data["_lookup"] = data["short_main"][available].drop_duplicates(subset="recordID")
@@ -973,105 +981,131 @@ def run_all(week=None):
 
     sheets = {}
 
-    # ── Original analyses (from short_main / wide_main / long_main) ──
-    sheets["#1_Snapp_Incentive_Amt"] = analysis_incentive_amounts_snapp(data, week)
-    sheets["#2_Tapsi_Incentive_Amt"] = analysis_incentive_amounts_tapsi(data, week)
+    def _safe_single(sheet_name, func, *args, **kwargs):
+        """Run an analysis function, skip on missing-column errors."""
+        try:
+            return func(*args, **kwargs)
+        except (KeyError, TypeError, ValueError) as e:
+            print(f"  [WARN] Skipping '{sheet_name}': {e}")
+            return pd.DataFrame()
 
-    for seg, df in analysis_satisfaction_review(data, week).items():
+    def _safe_multi(prefix, func, *args, **kwargs):
+        """Run an analysis function that returns a dict, skip on errors."""
+        try:
+            return func(*args, **kwargs)
+        except (KeyError, TypeError, ValueError) as e:
+            print(f"  [WARN] Skipping '{prefix}': {e}")
+            return {}
+
+    # ── Original analyses (from short_main / wide_main / long_main) ──
+    sheets["#1_Snapp_Incentive_Amt"] = _safe_single(
+        "#1", analysis_incentive_amounts_snapp, data, week)
+    sheets["#2_Tapsi_Incentive_Amt"] = _safe_single(
+        "#2", analysis_incentive_amounts_tapsi, data, week)
+
+    for seg, df in _safe_multi("#3_Satisfaction", analysis_satisfaction_review, data, week).items():
         sheets[f"#3_Sat_{seg[:20]}"] = df
 
-    sheets["#4_Incentive_Duration"] = analysis_incentive_time_limitation(data, week)
+    sheets["#4_Incentive_Duration"] = _safe_single(
+        "#4", analysis_incentive_time_limitation, data, week)
 
-    for plat, df in analysis_received_incentive_types(data, week).items():
+    for plat, df in _safe_multi("#5_6_IncType", analysis_received_incentive_types, data, week).items():
         sheets[f"#5_6_IncType_{plat}"] = df
 
-    dissat = analysis_incentive_dissatisfaction(data, week)
-    summary = dissat.pop("summary", {})
-    for plat, df in dissat.items():
-        sheets[f"#8_Dissat_{plat}"] = df
-    for plat, df in summary.items():
-        sheets[f"#9_Dissat_Sum_{plat}"] = df
+    try:
+        dissat = analysis_incentive_dissatisfaction(data, week)
+        summary = dissat.pop("summary", {})
+        for plat, df in dissat.items():
+            sheets[f"#8_Dissat_{plat}"] = df
+        for plat, df in summary.items():
+            sheets[f"#9_Dissat_Sum_{plat}"] = df
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"  [WARN] Skipping '#8/#9 Incentive Dissatisfaction': {e}")
 
-    sheets["#12_Cities_Overview"] = analysis_all_cities_overview(data, week)
+    sheets["#12_Cities_Overview"] = _safe_single(
+        "#12", analysis_all_cities_overview, data, week)
 
-    for seg, df in analysis_ride_share(data, week).items():
+    for seg, df in _safe_multi("#13_RideShare", analysis_ride_share, data, week).items():
         sheets[f"#13_RideShare_{seg[:15]}"] = df
 
-    for label, df in analysis_navigation_usage(data, week).items():
+    for label, df in _safe_multi("#14_Nav", analysis_navigation_usage, data, week).items():
         sheets[f"#14_Nav_{label[:20]}"] = df
 
-    for label, df in analysis_driver_persona(data, week).items():
+    for label, df in _safe_multi("#15_Persona", analysis_driver_persona, data, week).items():
         sheets[f"#15_Persona_{label[:16]}"] = df
 
-    for label, df in analysis_referral_plan(data, week).items():
+    for label, df in _safe_multi("#16_Ref", analysis_referral_plan, data, week).items():
         sheets[f"#16_Ref_{label[:20]}"] = df
 
-    sheets["#17_Inactivity"] = analysis_inactivity_before_incentive(data, week)
-    sheets["#18_CommFree"] = analysis_commission_free(data, week)
-    sheets["#19_LuckyWheel"] = analysis_lucky_wheel(data, week)
+    sheets["#17_Inactivity"] = _safe_single(
+        "#17", analysis_inactivity_before_incentive, data, week)
+    sheets["#18_CommFree"] = _safe_single(
+        "#18", analysis_commission_free, data, week)
+    sheets["#19_LuckyWheel"] = _safe_single(
+        "#19", analysis_lucky_wheel, data, week)
 
-    for label, df in analysis_request_refusal(data, week).items():
+    for label, df in _safe_multi("#20_Refusal", analysis_request_refusal, data, week).items():
         safe = label.replace(" ", "_")[:20]
         sheets[f"#20_Refusal_{safe}"] = df
 
     # ── NEW analyses (from short_rare / wide_rare / long_rare) ──
-    for plat, df in analysis_cs_satisfaction(data, week).items():
+    for plat, df in _safe_multi("#CS_Sat", analysis_cs_satisfaction, data, week).items():
         sheets[f"#CS_Sat_{plat}"] = df
 
-    for label, df in analysis_cs_categories(data, week).items():
+    for label, df in _safe_multi("#CS_Cat", analysis_cs_categories, data, week).items():
         safe = label.replace(" ", "_")[:18]
         sheets[f"#CS_Cat_{safe}"] = df
 
-    for plat, df in analysis_cs_important_reason(data, week).items():
+    for plat, df in _safe_multi("#CS_Reason", analysis_cs_important_reason, data, week).items():
         sheets[f"#CS_Reason_{plat}"] = df
 
-    reco = analysis_recommend(data, week)
+    reco = _safe_single("#Reco_NPS", analysis_recommend, data, week)
     if isinstance(reco, pd.DataFrame) and not reco.empty:
         sheets["#Reco_NPS"] = reco
 
-    for label, df in analysis_refer_others(data, week).items():
+    for label, df in _safe_multi("#Refer", analysis_refer_others, data, week).items():
         safe = label.replace(" ", "_")[:18]
         sheets[f"#Refer_{safe}"] = df
 
-    nav_reco = analysis_navigation_recommendations(data, week)
+    nav_reco = _safe_single("#NavReco", analysis_navigation_recommendations, data, week)
     if isinstance(nav_reco, pd.DataFrame) and not nav_reco.empty:
         sheets["#NavReco_Scores"] = nav_reco
 
-    for label, df in analysis_registration(data, week).items():
+    for label, df in _safe_multi("#Reg", analysis_registration, data, week).items():
         safe = label.replace(" ", "_")[:18]
         sheets[f"#Reg_{safe}"] = df
 
-    for label, df in analysis_better_income(data, week).items():
+    for label, df in _safe_multi("#Income", analysis_better_income, data, week).items():
         safe = label.replace(" ", "_")[:18]
         sheets[f"#Income_{safe}"] = df
 
-    decline = analysis_decline_reasons(data, week)
+    decline = _safe_single("#Decline", analysis_decline_reasons, data, week)
     if isinstance(decline, pd.DataFrame) and not decline.empty:
         sheets["#Decline_Reasons"] = decline
 
-    for label, df in analysis_snappcarfix_satisfaction(data, week).items():
+    for label, df in _safe_multi("#Carfix", analysis_snappcarfix_satisfaction, data, week).items():
         sheets[f"#Carfix_{label[:20]}"] = df
 
-    for label, df in analysis_tapsigarage_satisfaction(data, week).items():
+    for label, df in _safe_multi("#Garage", analysis_tapsigarage_satisfaction, data, week).items():
         sheets[f"#Garage_{label[:20]}"] = df
 
-    demand = analysis_demand(data, week)
+    demand = _safe_single("#Demand", analysis_demand, data, week)
     if isinstance(demand, pd.DataFrame) and not demand.empty:
         sheets["#Demand_Perception"] = demand
 
-    speed = analysis_speed_satisfaction(data, week)
+    speed = _safe_single("#Speed", analysis_speed_satisfaction, data, week)
     if isinstance(speed, pd.DataFrame) and not speed.empty:
         sheets["#Speed_Satisfaction"] = speed
 
-    dist = analysis_distance_to_origin(data, week)
+    dist = _safe_single("#DistOrigin", analysis_distance_to_origin, data, week)
     if isinstance(dist, pd.DataFrame) and not dist.empty:
         sheets["#DistOrigin_Sat"] = dist
 
-    for label, df in analysis_gps(data, week).items():
+    for label, df in _safe_multi("#GPS", analysis_gps, data, week).items():
         safe = label.replace(" ", "_")[:18]
         sheets[f"#GPS_{safe}"] = df
 
-    for label, df in analysis_unpaid_by_passenger(data, week).items():
+    for label, df in _safe_multi("#Unpaid", analysis_unpaid_by_passenger, data, week).items():
         safe = label.replace(" ", "_")[:18]
         sheets[f"#Unpaid_{safe}"] = df
 
