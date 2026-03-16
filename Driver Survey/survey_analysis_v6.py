@@ -124,6 +124,7 @@ Usage:
 # ============================================================================
 # PdfPages lets us write multiple matplotlib figures into a single PDF file,
 # where each figure becomes one page.  This is how we build the 74-page report.
+from contextlib import contextmanager
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib
 # Custom axis tick formatting (e.g., percentage labels)
@@ -349,7 +350,6 @@ def placeholder_page(pdf, title, reason="Data not available"):
     ax.axis("off")
     save_fig(pdf, fig)
 
-from contextlib import contextmanager
 
 @contextmanager
 def safe_page(pdf, title):
@@ -364,7 +364,6 @@ def safe_page(pdf, title):
                 plt.close(plt.figure(fn))
         print(f"[WARN] Skipping '{title}': {e}")
         placeholder_page(pdf, title, f"Skipped \u2013 missing column: {e}")
-
 
 
 # Safely load a CSV file, returning None (instead of crashing) if the file
@@ -658,7 +657,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         n_weeks = short["yearweek"].nunique()
         n_cities = short["city"].nunique()
         n_joint_pct = (short["driver_type"] == "Joint").mean() * 100
-        n_fulltime_pct = (short["cooperation_type"] == "Full-Time").mean() * 100
+        n_fulltime_pct = (short["cooperation_type"]
+                          == "Full-Time").mean() * 100
         snapp_sat_mean = short["snapp_overall_satisfaction"].mean()
         tapsi_sat_mean = short["tapsi_overall_satisfaction"].mean()
         snapp_nps_val = nps_score(short["snapp_recommend"])
@@ -705,7 +705,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax_sat)
 
         ax_nps = fig.add_axes([0.55, 0.52, 0.4, 0.26])
-        metrics = ["NPS", "Avg Incentive\n(M Rials)", "CS Satisfaction\n(Overall)"]
+        metrics = [
+            "NPS", "Avg Incentive\n(M Rials)", "CS Satisfaction\n(Overall)"]
         s_m = [snapp_nps_val, snapp_inc_mean,
                short["snapp_CS_satisfaction_overall"].mean()]
         t_m = [tapsi_nps_val, tapsi_inc_mean,
@@ -874,7 +875,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     with safe_page(pdf, 'Page 5 - ACTIVE JOINT RATE BY YEARWEEK'):
         weekly_joint = short.groupby("yearweek").agg(
             total=("active_joint", "size"), active=("active_joint", "sum"))
-        weekly_joint["rate"] = weekly_joint["active"] / weekly_joint["total"] * 100
+        weekly_joint["rate"] = weekly_joint["active"] / \
+            weekly_joint["total"] * 100
         fig, ax = new_fig("Active Joint (Tapsi) Rate by Year-Week")
         ax.plot(weekly_joint.index.astype(
             str), weekly_joint["rate"], marker="o", color=TAPSI_COLOR, linewidth=2.5, markersize=8)
@@ -987,7 +989,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     with safe_page(pdf, 'Page 9 - NPS BY YEARWEEK'):
         nps_weekly = short.groupby("yearweek").agg(
             snapp_nps=("snapp_recommend", nps_score), tapsi_nps=("tapsidriver_tapsi_recommend", nps_score)).dropna(how="all")
-        fig, ax = new_fig("NPS (Net Promoter Score) by Year-Week – Snapp vs Tapsi")
+        fig, ax = new_fig(
+            "NPS (Net Promoter Score) by Year-Week – Snapp vs Tapsi")
         if not nps_weekly["snapp_nps"].isna().all():
             ax.plot(nps_weekly.index.astype(
                 str), nps_weekly["snapp_nps"], marker="o", color=SNAPP_COLOR, linewidth=2.5, label="Snapp")
@@ -1056,7 +1059,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                      fontsize=15, fontweight="bold", y=0.99)
         for ax, (platform, cols) in zip(axes, incentive_types.items()):
             labels = list(cols.keys())
-            values = [wide[c].sum() if c in wide.columns else 0 for c in cols.values()]
+            values = [
+                wide[c].sum() if c in wide.columns else 0 for c in cols.values()]
             color = PLATFORM_COLORS[platform]
             y_pos = range(len(labels))
             ax.barh(y_pos, values, color=color, edgecolor="white")
@@ -1094,7 +1098,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                      fontsize=15, fontweight="bold", y=0.99)
         for ax, (platform, cols) in zip(axes, unsat_types.items()):
             labels = list(cols.keys())
-            values = [wide[c].sum() if c in wide.columns else 0 for c in cols.values()]
+            values = [
+                wide[c].sum() if c in wide.columns else 0 for c in cols.values()]
             color = PLATFORM_COLORS[platform]
             y_pos = range(len(labels))
             ax.barh(y_pos, values, color=color, edgecolor="white")
@@ -1175,7 +1180,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                                       (axes[1], "tapsi_LOC", TAPSI_COLOR, "Tapsi")]:
             data = short[col].dropna()
             ax.hist(data, bins=20, color=color, edgecolor="white", alpha=0.85)
-            ax.axvline(data.mean(), color="black", linestyle="--", linewidth=1.2)
+            ax.axvline(data.mean(), color="black",
+                       linestyle="--", linewidth=1.2)
             ax.text(data.mean()+1, ax.get_ylim()
                     [1]*0.9, f"Mean: {data.mean():.1f}", fontsize=9)
             ax.set_title(f"{label}  (n={len(data)})", fontsize=11)
@@ -1433,8 +1439,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         fig.suptitle("Commission & Tax Transparency – What Drivers Believe",
                      fontsize=15, fontweight="bold", y=0.97)
         for ax, col, color, label in [
-            (axes[0, 0], "snapp_comm_info", SNAPP_COLOR, "Snapp Commission Rate"),
-            (axes[0, 1], "tapsi_comm_info", TAPSI_COLOR, "Tapsi Commission Rate"),
+            (axes[0, 0], "snapp_comm_info",
+             SNAPP_COLOR, "Snapp Commission Rate"),
+            (axes[0, 1], "tapsi_comm_info",
+             TAPSI_COLOR, "Tapsi Commission Rate"),
             (axes[1, 0], "snapp_tax_info", SNAPP_COLOR, "Snapp Tax Info"),
             (axes[1, 1], "tapsi_tax_info", TAPSI_COLOR, "Tapsi Tax Info"),
         ]:
@@ -1502,7 +1510,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 ax.text(xi+offset, v+1,
                         f"{v/total*100:.0f}%", ha="center", fontsize=8)
         ax.set_xticks(x)
-        ax.set_xticklabels(["Full\nCompensation", "Partial", "None"], fontsize=9)
+        ax.set_xticklabels(
+            ["Full\nCompensation", "Partial", "None"], fontsize=9)
         ax.set_title("Compensation Outcome", fontsize=11)
         ax.legend(frameon=False, fontsize=9)
         style_ax(ax)
@@ -1564,7 +1573,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.legend(frameon=False, fontsize=9)
         style_ax(ax)
         ax = axes[1]
-        cs_dims = ["Overall", "Wait Time", "Solution", "Behaviour", "Relevance"]
+        cs_dims = ["Overall", "Wait Time",
+                   "Solution", "Behaviour", "Relevance"]
         snapp_cs_means = [short["snapp_CS_satisfaction_overall"].mean(),
                           short["snapp_CS_satisfaction_waittime"].mean(),
                           short["snapp_CS_satisfaction_solution"].mean(),
@@ -1599,8 +1609,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 color=SNAPP_COLOR, edgecolor="white")
         total_s = reasons_s.sum()
         for i, v in enumerate(reasons_s.values[::-1]):
-            ax.text(v+1, i, f"{v} ({v/total_s*100:.0f}%)", va="center", fontsize=9)
-        ax.set_title("Snapp CS Dissatisfaction\nMain Reason (top 5)", fontsize=11)
+            ax.text(v+1, i, f"{v} ({v/total_s*100:.0f}%)",
+                    va="center", fontsize=9)
+        ax.set_title(
+            "Snapp CS Dissatisfaction\nMain Reason (top 5)", fontsize=11)
         style_ax(ax)
         save_fig(pdf, fig)
 
@@ -1845,7 +1857,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax = axes[1]
         bar_colors = [SNAPP_COLOR if v >= job_sat["snapp_rec"].median(
         ) else GREY for v in job_sat["snapp_rec"]]
-        ax.barh(jobs, job_sat["snapp_rec"], color=bar_colors, edgecolor="white")
+        ax.barh(jobs, job_sat["snapp_rec"],
+                color=bar_colors, edgecolor="white")
         ax.axvline(job_sat["snapp_rec"].median(), color="black", linestyle="--", linewidth=1,
                    label=f"Median: {job_sat['snapp_rec'].median():.1f}")
         for i, (job, row) in enumerate(job_sat.iterrows()):
@@ -1885,7 +1898,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 offer_colors.get(k, GREY) for k in offer_data.index], edgecolor="white")
         total = offer_data.sum()
         for i, v in enumerate(offer_data.values):
-            ax.text(v + 5, i, f"{v} ({v/total*100:.0f}%)", va="center", fontsize=9)
+            ax.text(v + 5, i, f"{v} ({v/total*100:.0f}%)",
+                    va="center", fontsize=9)
         ax.set_title("Carpooling Offer Outcome", fontsize=11)
         style_ax(ax)
         ax = axes[1, 0]
@@ -1924,8 +1938,10 @@ with PdfPages(OUTPUT_PDF) as pdf:
         fig.suptitle("Feature Adoption – Snapp EcoPlus & Tapsi Magical Window",
                      fontsize=15, fontweight="bold", y=0.99)
         ax = axes[0]
-        ecoplus_familiar = short["snapp_ecoplus_familiar"].dropna().value_counts()
-        ecoplus_usage = short["snapp_ecoplus_access_usage"].dropna().value_counts()
+        ecoplus_familiar = short["snapp_ecoplus_familiar"].dropna(
+        ).value_counts()
+        ecoplus_usage = short["snapp_ecoplus_access_usage"].dropna(
+        ).value_counts()
         cats = ["Familiar", "Has Access\n& Uses",
                 "Has Access\n& Not Using", "Not Familiar"]
         vals = [ecoplus_familiar.get("Yes", 0), ecoplus_usage.get("Yes-Yes", 0),
@@ -1940,7 +1956,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         style_ax(ax)
         ax = axes[1]
         mw = short["tapsi_magical_window"].dropna().value_counts()
-        mw_colors = {"Yes": TAPSI_COLOR, "No": "#FFA726", "Not Familiar": LGREY}
+        mw_colors = {"Yes": TAPSI_COLOR,
+                     "No": "#FFA726", "Not Familiar": LGREY}
         ax.bar(mw.index, mw.values, color=[mw_colors.get(
             k, GREY) for k in mw.index], edgecolor="white")
         total_mw = mw.sum()
@@ -1980,7 +1997,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         for i, v in enumerate(reason.values):
             ax.text(v + 1, i, f"{v} ({v/total_r*100:.0f}%)",
                     va="center", fontsize=9)
-        ax.set_title("Why Drivers Avoid Talking\nAbout Their Work", fontsize=11)
+        ax.set_title(
+            "Why Drivers Avoid Talking\nAbout Their Work", fontsize=11)
         ax.set_xlabel("Count")
         style_ax(ax)
         save_fig(pdf, fig)
@@ -2142,7 +2160,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
     # What makes drivers unsatisfied with Snapp navigation, and why they refuse it.
     # Business value: direct product feedback for the Snapp navigation team.
     with safe_page(pdf, 'Page 48 - SNAPP NAVIGATION ISSUES'):
-        nav_unsat_q = long[long["question"] == "Snapp Navigation Unsatisfaction"]
+        nav_unsat_q = long[long["question"] ==
+                           "Snapp Navigation Unsatisfaction"]
         nav_refusal_q = long[long["question"] == "Snapp Navigation Refusal"]
         fig, axes = plt.subplots(1, 2, figsize=(14, 6), facecolor=BG_COLOR)
         fig.suptitle("Snapp Navigation Issues – long_survey",
@@ -2270,7 +2289,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                      fontsize=15, fontweight="bold", y=0.99)
         for ax, question, color, label in [
             (axes[0], "Snapp Usage app", SNAPP_COLOR, "Snapp App Usage"),
-            (axes[1], "Snapp Ecoplus Refusal", ACCENT2, "EcoPlus Refusal Reasons"),
+            (axes[1], "Snapp Ecoplus Refusal",
+             ACCENT2, "EcoPlus Refusal Reasons"),
         ]:
             qdata = long[long["question"] == question]
             if len(qdata) == 0:
@@ -2367,8 +2387,9 @@ with PdfPages(OUTPUT_PDF) as pdf:
             "Got Notification\n(Yes)", "Got Notification\n(No)", "Participated\n(Yes)", "Participated\n(No)"]
         funnel_colors = [SNAPP_COLOR, LGREY, "#66BB6A", "#EF5350"]
         ax = axes[0]
-        notif_vc = short["snapp_gotmessage_text_incentive"].dropna().value_counts()
-        partic_vc = short["snapp_incentive_message_participation"].dropna(
+        notif_vc = short["snapp_gotmessage_text_incentive"].dropna(
+        ).value_counts()
+        partic_vc = short["snapp_incentive_participation"].dropna(
         ).value_counts()
         funnel_vals = [notif_vc.get("Yes", 0), notif_vc.get(
             "No", 0), partic_vc.get("Yes", 0), partic_vc.get("No", 0)]
@@ -2385,7 +2406,7 @@ with PdfPages(OUTPUT_PDF) as pdf:
         ax.set_ylabel("Count")
         style_ax(ax)
         ax = axes[1]
-        tapsi_notif_col = "tapsi_gotmessage_incentive"
+        tapsi_notif_col = "tapsi_gotmessage_text_incentive"
         tapsi_partic_col = "tapsi_incentive_participation"
         t_notif_vc = short[tapsi_notif_col].dropna().value_counts(
         ) if tapsi_notif_col in short.columns else pd.Series(dtype=int)
@@ -2431,7 +2452,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
             for i, (k, v) in enumerate(vc.items()):
                 ax.text(i, v + 5, f"{v:,}\n({v/total*100:.0f}%)",
                         ha="center", fontsize=9)
-            ax.set_title(f"{label} Incentive Duration  (n={total:,})", fontsize=11)
+            ax.set_title(
+                f"{label} Incentive Duration  (n={total:,})", fontsize=11)
             ax.set_xlabel("Duration")
             ax.set_ylabel("Count")
             style_ax(ax)
@@ -2733,7 +2755,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         if "tapsi_gps_better" in short.columns:
             data = short["tapsi_gps_better"].dropna().value_counts()
             total = data.sum()
-            gps_colors = {"Yes": "#66BB6A", "No": "#EF5350", "Similar": "#FFA726"}
+            gps_colors = {"Yes": "#66BB6A",
+                          "No": "#EF5350", "Similar": "#FFA726"}
             ax.bar(data.index, data.values, color=[gps_colors.get(
                 k, GREY) for k in data.index], edgecolor="white")
             for i, (k, v) in enumerate(data.items()):
@@ -2750,7 +2773,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         if "tapsi_magical_window" in short.columns:
             data = short["tapsi_magical_window"].dropna().value_counts()
             total = data.sum()
-            mw_clrs = {"Yes": TAPSI_COLOR, "No": "#FFA726", "Not Familiar": LGREY}
+            mw_clrs = {"Yes": TAPSI_COLOR,
+                       "No": "#FFA726", "Not Familiar": LGREY}
             ax.bar(data.index, data.values, color=[mw_clrs.get(
                 k, GREY) for k in data.index], edgecolor="white")
             for i, (k, v) in enumerate(data.items()):
@@ -2767,7 +2791,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
         tapsi_ref_q = long[long["question"] ==
                            "Tapsi Incentive GotBonus"] if "question" in long.columns else pd.DataFrame()
         if len(tapsi_ref_q) > 0:
-            vc = tapsi_ref_q["answer"].value_counts().sort_values(ascending=True)
+            vc = tapsi_ref_q["answer"].value_counts(
+            ).sort_values(ascending=True)
             total = vc.sum()
             ax.barh(vc.index, vc.values, color=TAPSI_COLOR, edgecolor="white")
             for i, (k, v) in enumerate(vc.items()):
@@ -2881,7 +2906,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
             ]
             _cf_rec_col = "snappcarfix_recommend"
 
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG_COLOR)
+            fig, axes = plt.subplots(
+                2, 2, figsize=(14, 10), facecolor=BG_COLOR)
             fig.suptitle("Snapp CarFix \u2013 Funnel, Satisfaction & Recommendation",
                          fontsize=15, fontweight="bold", y=0.98)
 
@@ -2984,11 +3010,14 @@ with PdfPages(OUTPUT_PDF) as pdf:
                         ax.text(v + total_nu * 0.01, i,
                                 f"{v} ({v/total_nu*100:.0f}%)",
                                 va="center", fontsize=8)
-                    ax.set_title(f"Not-Use Reasons  (n={total_nu})", fontsize=11)
+                    ax.set_title(
+                        f"Not-Use Reasons  (n={total_nu})", fontsize=11)
                 else:
-                    ax.set_title("NotUse Reasons (no data in long)", fontsize=11)
+                    ax.set_title(
+                        "NotUse Reasons (no data in long)", fontsize=11)
             else:
-                ax.set_title("NotUse Reasons (long not available)", fontsize=11)
+                ax.set_title(
+                    "NotUse Reasons (long not available)", fontsize=11)
             ax.set_xlabel("Count")
             style_ax(ax)
 
@@ -3029,7 +3058,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
             ]
             _tg_rec_col = "tapsigarage_recommend"
 
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10), facecolor=BG_COLOR)
+            fig, axes = plt.subplots(
+                2, 2, figsize=(14, 10), facecolor=BG_COLOR)
             fig.suptitle("Tapsi Garage \u2013 Funnel, Satisfaction & Recommendation",
                          fontsize=15, fontweight="bold", y=0.98)
 
@@ -3055,7 +3085,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                         v + max(funnel_vals_tg) *
                         0.02 if max(funnel_vals_tg) > 0 else 1,
                         f"{v:,}{pct}", ha="center", fontsize=9, fontweight="bold")
-            ax.set_title(f"Adoption Funnel  (n={total_resp_tg:,})", fontsize=11)
+            ax.set_title(
+                f"Adoption Funnel  (n={total_resp_tg:,})", fontsize=11)
             ax.set_ylabel("Count (Yes)")
             style_ax(ax)
 
@@ -3159,7 +3190,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 fig.suptitle("Mixed Incentive Strategy \u2013 Awareness, Activation "
                              "& Preferences",
                              fontsize=15, fontweight="bold", y=0.98)
-                gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.35)
+                gs = gridspec.GridSpec(
+                    2, 3, figure=fig, hspace=0.35, wspace=0.35)
 
                 # --- Awareness pie ---
                 ax = fig.add_subplot(gs[0, 0])
@@ -3214,7 +3246,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                             ax.text(v + total_te * 0.01, i,
                                     f"{v} ({v/total_te*100:.0f}%)",
                                     va="center", fontsize=8)
-                        ax.set_title(f"Trip Effect  (n={total_te})", fontsize=11)
+                        ax.set_title(
+                            f"Trip Effect  (n={total_te})", fontsize=11)
                     else:
                         ax.set_title("Trip Effect (no data)", fontsize=11)
                 else:
@@ -3245,7 +3278,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 # --- Choice distribution ---
                 ax = fig.add_subplot(gs[1, 1:])
                 if "mixincentive_choice" in short.columns:
-                    ch_data = short["mixincentive_choice"].dropna().value_counts()
+                    ch_data = short["mixincentive_choice"].dropna(
+                    ).value_counts()
                     if len(ch_data) > 0:
                         total_ch = ch_data.sum()
                         ch_colors = [SNAPP_COLOR, TAPSI_COLOR, ACCENT, ACCENT2,
@@ -3454,7 +3488,8 @@ with PdfPages(OUTPUT_PDF) as pdf:
                 ax.text(b.get_x() + b.get_width() / 2,
                         v + max(fl_vals) * 0.02 if max(fl_vals) > 0 else 1,
                         f"{v:,}{pct}", ha="center", fontsize=9, fontweight="bold")
-            ax.set_title(f"Fix Location Adoption  (n={fl_total:,})", fontsize=11)
+            ax.set_title(
+                f"Fix Location Adoption  (n={fl_total:,})", fontsize=11)
             ax.set_ylabel("Count (Yes)")
             style_ax(ax)
 

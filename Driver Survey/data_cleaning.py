@@ -46,12 +46,13 @@ import re
 import unicodedata
 import numpy as np
 import pandas as pd
-from collections import defaultdict  # defaultdict: a dict that auto-creates missing keys with a default value
+# defaultdict: a dict that auto-creates missing keys with a default value
+from collections import defaultdict
 
 # ============================================================
 # CONFIGURATION — paths to raw data, mapping file, and output folder
 # ============================================================
-RAW_DIR = r"D:\Work\Driver Survey\raw"
+RAW_DIR = r"D:\Work\Driver Survey\raw1"
 MAPPING_PATH = r"D:\Work\Driver Survey\DataSources\column_rename_mapping.json"
 OUTPUT_DIR = r"D:\Work\Driver Survey\processed"
 
@@ -718,7 +719,7 @@ def add_computed_columns(short_df, wide_df):
         "750k_1m": 8_750_000,    # 750k-1m Tomans → 875k midpoint
         "800k_1m": 9_000_000,    # 800k-1m Tomans → 900k midpoint
         "1m_1.25m": 11_250_000,  # 1-1.25m Tomans → 1.125m midpoint
-        "1.25m_1.5m": 13_750_000, # 1.25-1.5m Tomans → 1.375m midpoint
+        "1.25m_1.5m": 13_750_000,  # 1.25-1.5m Tomans → 1.375m midpoint
         ">1m": 12_500_000,       # >1m Tomans → 1.25m estimate
         ">1.5m": 17_500_000,     # >1.5m Tomans → 1.75m estimate
     }
