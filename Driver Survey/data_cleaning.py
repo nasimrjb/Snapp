@@ -54,12 +54,13 @@ from collections import defaultdict
 # ============================================================
 RAW_DIR = r"D:\Work\Driver Survey\raw1"
 MAPPING_PATH = r"D:\Work\Driver Survey\DataSources\column_rename_mapping.json"
+# OUTPUT_DIR = r"D:\Work\Driver Survey\processed"
 OUTPUT_DIR = r"D:\Work\Driver Survey\processed"
-
 
 # ============================================================
 # Helpers — text normalization, file loading, date parsing
 # ============================================================
+
 
 def normalize(text):
     """
