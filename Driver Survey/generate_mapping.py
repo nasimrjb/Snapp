@@ -38,9 +38,9 @@ import os
 # ---------------------------------------------------------------------------
 # File paths — point to the Excel source and where the JSON output should go
 # ---------------------------------------------------------------------------
-XLSX_PATH = r"D:\Work\Driver Survey\DataSources\column_rename.xlsx"
-JSON_PATH = os.path.join(os.path.dirname(XLSX_PATH),
-                         "column_rename_mapping.json")
+BASE_DIR = r"D:\Work\Driver Survey\Sources"
+XLSX_PATH = os.path.join(BASE_DIR, "column_rename.xlsx")
+JSON_PATH = os.path.join(BASE_DIR, "column_rename_mapping.json")
 
 # ---------------------------------------------------------------------------
 # Lookup tables that translate the Excel's free-text labels into short,

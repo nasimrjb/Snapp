@@ -49,13 +49,15 @@ import pandas as pd
 # defaultdict: a dict that auto-creates missing keys with a default value
 from collections import defaultdict
 
+
 # ============================================================
 # CONFIGURATION — paths to raw data, mapping file, and output folder
 # ============================================================
-RAW_DIR = r"D:\Work\Driver Survey\raw1"
-MAPPING_PATH = r"D:\Work\Driver Survey\DataSources\column_rename_mapping.json"
-# OUTPUT_DIR = r"D:\Work\Driver Survey\processed"
-OUTPUT_DIR = r"D:\Work\Driver Survey\processed"
+BASE_DIR = r"D:\Work\Driver Survey"
+RAW_DIR = os.path.join(BASE_DIR, "raw")
+MAPPING_PATH = os.path.join(BASE_DIR, "Sources",
+                            "column_rename_mapping.json")
+OUTPUT_DIR = os.path.join(BASE_DIR, "processed")
 
 # ============================================================
 # Helpers — text normalization, file loading, date parsing
